@@ -60,8 +60,7 @@ def voice_track(cues):
     # broadcast-ish chain: gentle high-pass, presence lift, soft limiter
     v = signal.sosfilt(signal.butter(2, 80 / (SR / 2), "high", output="sos"), v)
     pres = signal.sosfilt(signal.butter(2, [2500 / (SR / 2), 6000 / (SR / 2)], "band", output="sos"), v)
-    v = v + 0.25 * pres
-    v = np.tanh(v * 1.4) / np.tanh(1.4)
+    v = v + 0.12 * pres
     return v / np.max(np.abs(v))
 
 def duck_envelope(v, depth_db=-9.0, attack=0.08, release=0.9):
@@ -80,7 +79,7 @@ def duck_envelope(v, depth_db=-9.0, attack=0.08, release=0.9):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--voice", default="bf_emma")
+    ap.add_argument("--voice", default="af_heart")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--voice-gain", type=float, default=0.8)
     a = ap.parse_args()
