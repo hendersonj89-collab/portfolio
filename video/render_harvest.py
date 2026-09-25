@@ -1,0 +1,973 @@
+#!/usr/bin/env python3
+"""
+Mosaic — "Stump to road": an educational explainer on ground-based, cable and tethered
+harvesting, piece-size economics, mobilisation cost and machine connectivity.
+Reuses the brand system from render.py (palette, contours, Jost, wordmark, wipes, encoder).
+
+    python render_harvest.py                 # -> out/harvest_video.mp4
+    python render_harvest.py --stills 300 900 --scale 0.5
+"""
+import math
+import os
+
+import cairo
+import render as R
+from render import (C, W, H, GRAD, gradc, hexc, lerp, lerpc, clamp, seg, hsh, ease_out_cubic, ease_in_out, ease_out_expo,
+                    ease_out_back, set_col, text, reveal_text, eyebrow, rrect, vgrad, glow, contours, paper_bg, taupe_bg,
+                    conifer, wordmark, icon, font, text_width)
+
+NAVY = C["navy"]
+
+# ============================================================================= drawing helpers
+def stroke_fill(ctx, fill, line=NAVY, lw=2.5, alpha=1.0):
+    set_col(ctx, fill, alpha); ctx.fill_preserve(); set_col(ctx, line, alpha); ctx.set_line_width(lw); ctx.stroke()
+
+def tracks(ctx, x, y, w, h, alpha=1.0, roll=0.0):
+    """crawler undercarriage, bottom-centre at (x, y); roll shifts the roller dots so the track reads as moving"""
+    rrect(ctx, x - w / 2, y - h, w, h, h / 2); stroke_fill(ctx, NAVY, alpha=alpha)
+    set_col(ctx, C["paper"], 0.9 * alpha)
+    ctx.save(); rrect(ctx, x - w / 2 + h * 0.3, y - h, w - h * 0.6, h, h / 2); ctx.clip()
+    n = int(w / (h * 0.9)) + 1; step = (w - h) / max(1, n - 1)
+    for i in range(n + 1):
+        cx = x - w / 2 + h / 2 + ((i * step + roll) % ((n) * step)) - step * 0.5
+        ctx.new_path(); ctx.arc(cx, y - h / 2, h * 0.22, 0, 2 * math.pi); ctx.fill()
+    ctx.restore()
+
+def wheel(ctx, x, y, r, alpha=1.0):
+    ctx.new_path(); ctx.arc(x, y, r, 0, 2 * math.pi); stroke_fill(ctx, NAVY, alpha=alpha)
+    set_col(ctx, C["paper"], alpha); ctx.new_path(); ctx.arc(x, y, r * 0.45, 0, 2 * math.pi); ctx.fill()
+
+def cab(ctx, x, y, w, h, accent, alpha=1.0):
+    rrect(ctx, x, y - h, w, h, 6); stroke_fill(ctx, C["paper"], alpha=alpha)
+    rrect(ctx, x + w * 0.12, y - h * 0.9, w * 0.76, h * 0.5, 4); set_col(ctx, accent, 0.85 * alpha); ctx.fill()
+
+def body(ctx, x, y, w, h, alpha=1.0):
+    rrect(ctx, x, y - h, w, h, 5); stroke_fill(ctx, C["paper2"], alpha=alpha)
+
+def boom(ctx, pts, lw=9, alpha=1.0):
+    """articulated boom through pts"""
+    ctx.set_line_cap(cairo.LINE_CAP_ROUND); ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+    ctx.move_to(*pts[0])
+    for p in pts[1:]: ctx.line_to(*p)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(lw); ctx.stroke()
+    ctx.move_to(*pts[0])
+    for p in pts[1:]: ctx.line_to(*p)
+    set_col(ctx, C["paper"], alpha); ctx.set_line_width(lw * 0.45); ctx.stroke()
+    for p in pts: ctx.new_path(); ctx.arc(p[0], p[1], lw * 0.55, 0, 2 * math.pi); set_col(ctx, NAVY, alpha); ctx.fill()
+
+def log(ctx, x, y, L, d, ang=0.0, alpha=1.0, col=None):
+    """a log centred at (x, y), length L, diameter d, rotated ang"""
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang)
+    rrect(ctx, -L / 2, -d / 2, L, d, d / 2); stroke_fill(ctx, col or C["earth"], lw=1.8, alpha=alpha)
+    set_col(ctx, NAVY, 0.5 * alpha); ctx.new_path(); ctx.arc(-L / 2 + d / 2, 0, d * 0.22, 0, 2 * math.pi); ctx.fill()
+    ctx.restore()
+
+def cable(ctx, p0, p1, sag=0.0, lw=2.2, col=NAVY, alpha=1.0, dash=None):
+    ctx.save()
+    if dash: ctx.set_dash(dash[0], dash[1])
+    mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2 + sag
+    ctx.move_to(*p0); ctx.curve_to(mx, my, mx, my, *p1)
+    set_col(ctx, col, alpha); ctx.set_line_width(lw); ctx.stroke(); ctx.restore()
+
+def stump(ctx, x, y, s=9, alpha=1.0):
+    rrect(ctx, x - s / 2, y - s * 0.8, s, s * 0.8, 2); stroke_fill(ctx, hexc("#8a7a5a"), lw=1.5, alpha=alpha)
+
+def label_tag(ctx, x, y, s, p, col=None, align="left"):
+    """small rounded label with a pin"""
+    if p <= 0: return
+    col = col or C["aqua2"]; e = ease_out_back(p, 1.8)
+    font(ctx, "Jost Medium"); ctx.set_font_size(15); w = text_width(ctx, s.upper(), 2.5) + 28
+    ctx.save(); ctx.translate(x, y); ctx.scale(e, e)
+    x0 = -w / 2 if align == "center" else (-w if align == "right" else 0)
+    rrect(ctx, x0, -30, w, 30, 8); set_col(ctx, C["white"], 0.95); ctx.fill_preserve(); set_col(ctx, col); ctx.set_line_width(1.5); ctx.stroke()
+    text(ctx, s.upper(), x0 + 14, -9, 15, col, fam="Jost Medium", tracking=2.5)
+    ctx.restore()
+
+# ----------------------------------------------------------------------------- machines (side view, facing left)
+def feller_buncher(ctx, x, y, s=1.0, phase=0.0, alpha=1.0):
+    tracks(ctx, x, y, 150 * s, 36 * s, alpha)
+    body(ctx, x - 55 * s, y - 36 * s, 120 * s, 34 * s, alpha)
+    cab(ctx, x - 20 * s, y - 70 * s, 62 * s, 46 * s, C["lime"], alpha)
+    reach = 150 * s + 12 * s * math.sin(phase)
+    hy = y - 42 * s - 25 * s * (0.5 + 0.5 * math.sin(phase * 1.3))
+    j1 = (x - 14 * s, y - 100 * s); j2 = (x - 120 * s, y - 130 * s); j3 = (x - reach, hy)
+    boom(ctx, [j1, j2, j3], 10 * s, alpha)
+    # felling head: disc saw
+    ctx.new_path(); ctx.arc(j3[0], j3[1] + 14 * s, 22 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(2)
+    for k in range(8):
+        a = phase * 6 + k * math.pi / 4
+        ctx.move_to(j3[0] + 14 * s * math.cos(a), j3[1] + 14 * s + 14 * s * math.sin(a)); ctx.line_to(j3[0] + 22 * s * math.cos(a), j3[1] + 14 * s + 22 * s * math.sin(a))
+    ctx.stroke()
+    rrect(ctx, j3[0] - 10 * s, j3[1] - 30 * s, 20 * s, 34 * s, 4); stroke_fill(ctx, C["paper2"], alpha=alpha)
+
+def skidder(ctx, x, y, s=1.0, logs=0, alpha=1.0, bounce=0.0):
+    y = y - 3 * bounce
+    body(ctx, x - 70 * s, y - 34 * s, 70 * s, 26 * s, alpha)          # rear frame
+    cab(ctx, x - 5 * s, y - 34 * s, 56 * s, 44 * s, C["lime"], alpha)
+    body(ctx, x + 50 * s, y - 34 * s, 40 * s, 22 * s, alpha)          # engine hood (front, left-facing... front is left)
+    boom(ctx, [(x - 60 * s, y - 40 * s), (x - 85 * s, y - 80 * s), (x - 110 * s, y - 40 * s)], 8 * s, alpha)   # grapple arch
+    for wx in (x - 50 * s, x + 45 * s): wheel(ctx, wx, y - 22 * s, 24 * s, alpha)
+    if logs:
+        for i in range(logs):
+            log(ctx, x - 110 * s - 70 * s + i * 6, y - 18 * s + i * 9 - 10 * s, 150 * s, 12 * s, 0.10, alpha)
+
+def excavator(ctx, x, y, s=1.0, accent=None, tool="grapple", boom_pts=None, alpha=1.0, phase=0.0, draw_boom=True, roll=0.0):
+    accent = accent or C["aqua"]
+    tracks(ctx, x, y, 130 * s, 34 * s, alpha, roll)
+    body(ctx, x - 60 * s, y - 34 * s, 110 * s, 30 * s, alpha)
+    cab(ctx, x - 40 * s, y - 64 * s, 52 * s, 40 * s, accent, alpha)
+    if not draw_boom: return None
+    pts = boom_pts or [(x - 10 * s, y - 80 * s), (x - 90 * s, y - 150 * s), (x - 160 * s, y - 60 * s + 10 * s * math.sin(phase))]
+    boom(ctx, pts, 9 * s, alpha)
+    ex, ey = pts[-1]
+    if tool == "grapple":
+        set_col(ctx, NAVY, alpha); ctx.set_line_width(3 * s); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+        for sd in (-1, 1):
+            ctx.move_to(ex, ey); ctx.curve_to(ex + sd * 22 * s, ey + 10 * s, ex + sd * 20 * s, ey + 30 * s, ex + sd * 6 * s, ey + 36 * s); ctx.stroke()
+    elif tool == "head":
+        rrect(ctx, ex - 14 * s, ey - 6 * s, 28 * s, 44 * s, 5); stroke_fill(ctx, C["paper2"], alpha=alpha)
+    return pts
+
+def log_truck(ctx, x, y, s=1.0, logs=0, alpha=1.0):
+    # tractor (front left)
+    cab(ctx, x - 150 * s, y - 24 * s, 60 * s, 52 * s, C["aqua"], alpha)
+    body(ctx, x - 90 * s, y - 24 * s, 200 * s, 14 * s, alpha)
+    for wx in (x - 128 * s, x - 60 * s, x - 30 * s, x + 70 * s, x + 100 * s): wheel(ctx, wx, y - 14 * s, 14 * s, alpha)
+    for bx in (x - 70 * s, x + 90 * s):   # bunks / stakes
+        set_col(ctx, NAVY, alpha); ctx.set_line_width(3 * s); ctx.move_to(bx, y - 38 * s); ctx.line_to(bx, y - 100 * s); ctx.stroke()
+    for i in range(logs):
+        row, col = divmod(i, 4)
+        log(ctx, x + 10 * s, y - 46 * s - row * 13 * s - (col % 2) * 4, 200 * s, 12 * s, 0, alpha, lerpc(C["earth"], C["paper"], 0.1 * col))
+
+def yarder(ctx, x, y, s=1.0, alpha=1.0):
+    """tower yarder, returns the sheave point at the top of the mast"""
+    tracks(ctx, x, y, 150 * s, 38 * s, alpha)
+    body(ctx, x - 70 * s, y - 38 * s, 140 * s, 44 * s, alpha)
+    cab(ctx, x + 10 * s, y - 82 * s, 56 * s, 42 * s, C["aqua"], alpha)
+    # drums
+    for dx in (-45, -15):
+        ctx.new_path(); ctx.arc(x + dx * s, y - 60 * s, 14 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
+    # mast
+    top = (x - 30 * s, y - 330 * s)
+    rrect(ctx, x - 38 * s, top[1], 16 * s, 330 * s - 82 * s, 4); stroke_fill(ctx, C["paper"], alpha=alpha)
+    ctx.new_path(); ctx.arc(top[0], top[1], 10 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
+    # guylines back to anchors
+    for gx in (x + 150 * s, x + 235 * s):
+        cable(ctx, top, (gx, y), sag=6, lw=1.6, alpha=0.8 * alpha)
+        stump(ctx, gx, y, 10 * s, alpha)
+    return top
+
+def carriage(ctx, x, y, s=1.0, drop=0.0, logs=(), alpha=1.0):
+    rrect(ctx, x - 16 * s, y - 8 * s, 32 * s, 22 * s, 4); stroke_fill(ctx, C["paper"], alpha=alpha)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(2); ctx.move_to(x, y + 14 * s); ctx.line_to(x, y + 14 * s + drop); ctx.stroke()
+    for (L, d, ang, ox, oy) in logs:
+        log(ctx, x + ox, y + 14 * s + drop + oy, L, d, ang, alpha)
+
+def lowbed(ctx, x, y, s=1.0, alpha=1.0, machine=True):
+    cab(ctx, x - 200 * s, y - 24 * s, 60 * s, 52 * s, C["aqua"], alpha)
+    body(ctx, x - 140 * s, y - 24 * s, 40 * s, 14 * s, alpha)
+    # low deck
+    ctx.move_to(x - 100 * s, y - 24 * s); ctx.line_to(x - 80 * s, y - 10 * s); ctx.line_to(x + 120 * s, y - 10 * s); ctx.line_to(x + 140 * s, y - 24 * s)
+    ctx.line_to(x + 200 * s, y - 24 * s); ctx.line_to(x + 200 * s, y - 14 * s); ctx.line_to(x + 140 * s, y - 14 * s); ctx.line_to(x + 118 * s, y); ctx.line_to(x - 82 * s, y); ctx.line_to(x - 100 * s, y - 14 * s); ctx.close_path()
+    stroke_fill(ctx, C["paper2"], alpha=alpha)
+    for wx in (x - 178 * s, x - 120 * s, x + 160 * s, x + 185 * s): wheel(ctx, wx, y - 12 * s, 12 * s, alpha)
+    if machine:
+        ctx.save(); ctx.translate(x + 20 * s, y - 10 * s); ctx.scale(0.7 * s, 0.7 * s); yarder_folded(ctx, 0, 0, alpha); ctx.restore()
+
+def yarder_folded(ctx, x, y, alpha=1.0):
+    tracks(ctx, x, y, 150, 38, alpha); body(ctx, x - 70, y - 38, 140, 44, alpha); cab(ctx, x + 10, y - 82, 56, 42, C["aqua"], alpha)
+    rrect(ctx, x - 150, y - 100, 220, 16, 4); stroke_fill(ctx, C["paper"], alpha=alpha)   # mast laid down
+
+# ----------------------------------------------------------------------------- terrain
+def terrain(ctx, gy, x0=-20, x1=W + 20, top=None, alpha=1.0, step=16):
+    """fill below the ground function gy(x); returns nothing"""
+    ctx.move_to(x0, gy(x0))
+    for x in range(int(x0), int(x1) + step, step): ctx.line_to(x, gy(x))
+    ctx.line_to(x1, H + 20); ctx.line_to(x0, H + 20); ctx.close_path()
+    ctx.set_source(vgrad([(0, top or hexc("#e9e4d6")), (1, hexc("#cfc7b3"))], 0, 500, 0, H)); ctx.fill_preserve()
+    set_col(ctx, NAVY, 0.55 * alpha); ctx.set_line_width(2.5); ctx.stroke()
+    # subtle strata
+    ctx.save()
+    ctx.move_to(x0, gy(x0))
+    for x in range(int(x0), int(x1) + step, step): ctx.line_to(x, gy(x))
+    ctx.line_to(x1, H + 20); ctx.line_to(x0, H + 20); ctx.close_path(); ctx.clip()
+    set_col(ctx, C["white"], 0.35); ctx.set_line_width(1.2)
+    for k in range(1, 7):
+        ctx.move_to(x0, gy(x0) + 40 * k)
+        for x in range(int(x0), int(x1) + step, step): ctx.line_to(x, gy(x) + 40 * k + 6 * math.sin(x * 0.01 + k))
+        ctx.stroke()
+    ctx.restore()
+
+def road(ctx, gy, x0, x1, alpha=1.0):
+    ctx.move_to(x0, gy(x0) - 6); ctx.line_to(x1, gy(x1) - 6); ctx.line_to(x1, gy(x1) + 10); ctx.line_to(x0, gy(x0) + 10); ctx.close_path()
+    set_col(ctx, C["taupe"], alpha); ctx.fill()
+    set_col(ctx, C["white"], 0.7 * alpha); ctx.set_line_width(1.5); ctx.set_dash([14, 12]); ctx.move_to(x0, gy(x0) + 2); ctx.line_to(x1, gy(x1) + 2); ctx.stroke(); ctx.set_dash([])
+
+def slope_marker(ctx, x, y, run, rise, p, label):
+    """right-angle triangle with % label"""
+    if p <= 0: return
+    a = ease_out_cubic(p)
+    set_col(ctx, C["aqua2"], a); ctx.set_line_width(2); ctx.set_dash([6, 6])
+    ctx.move_to(x, y); ctx.line_to(x + run, y); ctx.line_to(x + run, y - rise); ctx.stroke(); ctx.set_dash([])
+    ctx.move_to(x, y); ctx.line_to(x + run, y - rise); ctx.stroke()
+    text(ctx, label, x + run + 14, y - rise / 2 + 6, 22, C["aqua2"], fam="Jost SemiBold", alpha=a)
+
+def left_panel(ctx, w=760, h=H):
+    ctx.save()
+    if h < H:
+        ctx.set_source(vgrad([(0, hexc("#ffffff", 1)), (0.8, hexc("#ffffff", 1)), (1, hexc("#ffffff", 0))], 0, 0, 0, h)); ctx.rectangle(0, 0, w, h); ctx.clip()
+        ctx.push_group()
+    ctx.set_source(vgrad([(0, hexc("#ffffff", 0.96)), (0.75, hexc("#ffffff", 0.85)), (1, hexc("#ffffff", 0))], 0, 0, w, 0)); ctx.rectangle(0, 0, w, h); ctx.fill()
+    if h < H:
+        ctx.pop_group_to_source(); ctx.mask(vgrad([(0, hexc("#000000", 1)), (0.8, hexc("#000000", 1)), (1, hexc("#000000", 0))], 0, 0, 0, h))
+    ctx.restore()
+
+def bullets(ctx, items, x, y0, t, dy=50, size=24, col=None):
+    for k, (s, at) in enumerate(items):
+        p = seg(t, at, at + 0.7)
+        if p <= 0: continue
+        y = y0 + k * dy; e = ease_out_back(p, 2.2)
+        ctx.save(); ctx.translate(x + 12, y - 9); ctx.scale(e, e); icon(ctx, "check", 0, 0, 10, col or gradc(k / max(1, len(items) - 1)), lw=2.2); ctx.restore()
+        text(ctx, s, x + 40, y, size, C["ink"], fam="Jost", alpha=ease_out_cubic(p))
+
+# ============================================================================= SCENES
+# ----------------------------------------------------------------------------- 1. title (0-8)
+def s_title(ctx, t, T):
+    paper_bg(ctx, T, 1.0, reveal=seg(t, 0.0, 2.2))
+    wordmark(ctx, 960, 300, 96, seg(t, 0.3, 1.6), ring_p=seg(t, 0.8, 1.9))
+    eyebrow(ctx, "Mosaic explains", 960 - 110, 440, seg(t, 1.6, 2.3))
+    reveal_text(ctx, "Stump to road.", 960, 560, 110, NAVY, seg(t, 1.9, 2.8), fam="Jost Light", align="center")
+    reveal_text(ctx, "How logs are harvested, what drives the cost, and how", 960, 640, 30, C["ink"], seg(t, 2.8, 3.7), fam="Jost Light", align="center")
+    reveal_text(ctx, "connected machines help contractors succeed.", 960, 682, 30, C["ink"], seg(t, 3.0, 3.9), fam="Jost Light", align="center")
+    rp = ease_out_expo(seg(t, 3.6, 4.8))
+    if rp > 0:
+        g = cairo.LinearGradient(760, 0, 1160, 0)
+        for k, c in enumerate(GRAD): g.add_color_stop_rgba(k / 3, *c)
+        ctx.set_source(g); ctx.rectangle(960 - 200 * rp, 740, 400 * rp, 3); ctx.fill()
+    # three little machine glyphs
+    for k, (kind, lab) in enumerate([("ground", "Ground"), ("cable", "Cable"), ("tether", "Tethered")]):
+        p = seg(t, 4.4 + k * 0.3, 5.1 + k * 0.3)
+        if p <= 0: continue
+        x = 960 + (k - 1) * 260; e = ease_out_back(p)
+        ctx.save(); ctx.translate(x, 850); ctx.scale(e * 0.42, e * 0.42)
+        if kind == "ground": feller_buncher(ctx, 40, 30, 1.0, 0)
+        elif kind == "cable": top = yarder(ctx, 60, 30, 0.6); cable(ctx, top, (-220, 30), sag=20); stump(ctx, -220, 30, 10)
+        else:
+            cable(ctx, (110, 10), (260, -70), sag=4, lw=2.6, col=C["green2"]); stump(ctx, 262, -66, 12)
+            excavator(ctx, 60, 30, 0.8, C["green"], tool="head", boom_pts=[(50, -40), (-40, -110), (-140, -20)])
+        ctx.restore()
+        text(ctx, lab.upper(), x, 920, 15, C["grey"], fam="Jost Medium", align="center", tracking=4, alpha=ease_out_cubic(p))
+
+# ----------------------------------------------------------------------------- 2. ground-based (8-30)
+def g_ground(x): return 820 + 0.10 * (x - 1500) + 8 * math.sin(x * 0.006)
+
+G_TREES = [880, 795, 710, 625]             # buncher works these uphill (leftwards), in order
+G_START = 1.0
+G_CYC = [4.8] + [4.6] * 3
+G_END = 1.0 + sum(G_CYC); G_NEXT = 560     # after the last tree the buncher moves on to the next strip
+G_ST = [G_START + sum(G_CYC[:k]) for k in range(len(G_CYC))]
+G_LAY = math.pi / 2 + math.atan(0.10)     # laid to the right (downhill, behind the machine) along the ground
+G_STEM = -(math.pi / 2 - math.atan(0.10)) # a stem lying on the landing, butt right, top left, along the ground
+GS_TRIPS = [8.4, 18.4]                    # skidder trips: trees (0,1), then (2,3) hauled out through the cut
+GS_OUT, GS_TURN, GS_GRAB, GS_HAUL, GS_DROP = 1.8, 0.4, 0.4, 2.0, 0.5
+GS_CYC = GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP
+GS_LAND = 1290                             # skidder stops here; the drag lies to its left on the landing
+P_X, L_X, TR_X = 1400, 1660, 1845          # processor, loader, truck
+HEAD_X = 1205                              # processor head: stems are fed through it here
+DECK_X = 1520
+PC_START, PC = 0.5, 3.6                    # processor cycles continuously while there are stems
+
+def g_tree_state(j, t):
+    c = t - G_ST[j]; L = G_CYC[j]
+    if c < 0: return "stand", 0.0
+    names = ("stand", "grip", "cut", "lay", "release"); e0 = 0.0
+    for name, f in zip(names, PH):
+        e1 = e0 + L * f
+        if c < e1: return name, (c - e0) / (e1 - e0)
+        e0 = e1
+    return "done", 1.0
+
+def landing_stem(ctx, x_butt, y_butt, i, seed, clip_x=None, alpha=1.0):
+    """a tree-length lying on the landing with its butt at (x_butt, y_butt), top pointing uphill (left)"""
+    ctx.save()
+    if clip_x is not None: ctx.rectangle(0, 0, clip_x, H); ctx.clip()
+    ctx.translate(x_butt, y_butt); ctx.rotate(G_STEM)
+    conifer(ctx, 0, 0, 150 + 20 * (i % 2), 1.0, seed=seed, sway_t=0, tiers=10, alpha=alpha); ctx.restore()
+
+def s_ground(ctx, t, T):
+    paper_bg(ctx, T, 0.7)
+    terrain(ctx, g_ground)
+    road(ctx, g_ground, 1250, W + 20)
+    gy = lambda x: g_ground(x) + 2
+    # ---- buncher state
+    k = max([i for i in range(len(G_TREES)) if t >= G_ST[i]], default=-1)
+    if k < 0: hx = 1080.0; phase, pp = "idle", 0.0
+    else:
+        phase, pp = g_tree_state(k, t)
+        goal = G_TREES[k] + 110; prev = 1080.0 if k == 0 else G_TREES[k - 1] + 110
+        hx = prev + (goal - prev) * ease_in_out(pp) if phase == "stand" else goal
+        if phase == "stand": phase = "travel"
+        if phase == "done":
+            u = ease_in_out(seg(t, G_END, G_END + 1.8)); hx = goal + (G_NEXT - goal) * u
+            phase, pp = ("travel", u) if u < 1 else ("idle", 0.0)
+    hy = gy(hx); tilt = -math.atan2(g_ground(hx - 40) - g_ground(hx + 40), 80)
+    # ---- skidder trips
+    sk = None; picked = set(); drops = []          # drops: times a drag was released on the landing
+    for j, s0 in enumerate(GS_TRIPS):
+        if t < s0: break
+        goal = G_TREES[2 * j] + 270; c = t - s0   # grapple at the downhill end of the pair, clear of the buncher
+        if c < GS_OUT: sx = GS_LAND + (goal - GS_LAND) * ease_in_out(c / GS_OUT); st = "out"
+        elif c < GS_OUT + GS_TURN: sx = goal; st = "turn"
+        elif c < GS_OUT + GS_TURN + GS_GRAB: sx = goal; st = "grab"
+        elif c < GS_OUT + GS_TURN + GS_GRAB + GS_HAUL: sx = goal + (GS_LAND - goal) * ease_in_out((c - GS_OUT - GS_TURN - GS_GRAB) / GS_HAUL); st = "haul"
+        elif c < GS_CYC: sx = GS_LAND; st = "drop"
+        else: sx = GS_LAND; st = "wait"
+        sk = (sx, st, j, c)
+        if c >= GS_OUT + GS_TURN + GS_GRAB * 0.5: picked.update((2 * j, 2 * j + 1))
+        if c >= GS_OUT + GS_TURN + GS_GRAB + GS_HAUL: drops.append(s0 + GS_OUT + GS_TURN + GS_GRAB + GS_HAUL)
+    # ---- background stand (never cut) + worked trees
+    for i in range(7):
+        tx = 300 + i * 28 + (hsh(i, 1) - 0.5) * 14; conifer(ctx, tx, gy(tx), 120 + 50 * hsh(i, 2), 1.0, seed=i, sway_t=T, tiers=10, alpha=0.6)
+    states = [(j, tx, gy(tx), 150 + 40 * hsh(j, 3)) + g_tree_state(j, t) for j, tx in enumerate(G_TREES)]
+    for j, tx, ty, hgt, ph, p in states:          # laid bunches first (behind the machine, near plane)
+        if ph in ("stand", "grip", "cut") or (ph in ("release", "done") and j in picked): continue
+        ang = G_LAY * ease_in_out(p) if ph == "lay" else G_LAY
+        ox, oy = (0, 0) if ph == "lay" else (8, 10)
+        ctx.save(); ctx.translate(tx + ox, ty + oy); ctx.rotate(ang); ctx.translate(-tx - ox, -ty - oy)
+        conifer(ctx, tx + ox, ty + oy, hgt, 1.0, seed=20 + j, sway_t=0, tiers=10); ctx.restore()
+    for j, tx, ty, hgt, ph, p in states:
+        if ph not in ("stand", "grip", "cut"): stump(ctx, tx, ty, 11); continue
+        conifer(ctx, tx, ty, hgt, 1.0, seed=20 + j, sway_t=T if ph == "stand" else 0, tiers=10)
+        if ph == "cut":
+            set_col(ctx, C["amber"], 0.9); ctx.set_line_width(3)
+            for m in range(5):
+                aa = -0.3 - m * 0.5 + p * 2; ctx.move_to(tx + 4, ty - 6); ctx.line_to(tx + 4 + 18 * math.cos(aa), ty - 6 + 18 * math.sin(aa))
+            ctx.stroke()
+    # ---- landing pile + processor schedule: stems available = 2 to start + 2 per drop; one consumed per cycle
+    def avail(tt): return 4 + 2 * sum(1 for d in drops if d <= tt)
+    consumed = 0; active = None; n = 0; logs_bucked = 0
+    while True:
+        st0 = PC_START + n * PC; n += 1
+        if st0 > t: break
+        if consumed < avail(st0):
+            consumed += 1
+            q = (t - st0) / PC
+            if q < 1: active = (st0, q)
+            logs_bucked += sum(1 for f in (0.45, 0.65, 0.85) if q >= f)
+        if n > 40: break
+    pile = avail(t) - consumed
+    pile_butt = (GS_LAND - 92, gy(GS_LAND - 92) - 4)
+    py = gy(P_X)
+    # stems waiting on the landing (drawn under the skidder's drag so a drop reads as 'added to the pile')
+    for i in range(pile):
+        landing_stem(ctx, pile_butt[0] - i * 4, pile_butt[1] - i * 7, i, 40 + i)
+    # the stem being fed slides right through the head; clipped at the head so it 'disappears' into it
+    feed_pt = (HEAD_X + 10, gy(HEAD_X) - 16); tip = feed_pt
+    if active:
+        st0, q = active
+        if q < 0.2:
+            e = math.sin(math.pi * q / 0.2); tip = (feed_pt[0] - 40 * e, feed_pt[1] - 30 * e)   # head dips to pick the next stem
+        elif q < 0.85:
+            shift = 170 * ease_in_out((q - 0.2) / 0.65)
+            landing_stem(ctx, pile_butt[0] + shift, pile_butt[1] + 4, 0, 40 + consumed, clip_x=HEAD_X)
+    # bucked logs on the deck; loader takes one per cycle
+    loads = int(max(0, (t - 2.0) / 3.0)); lc = (t - 2.0) % 3.0 if t >= 2.0 else 0.0
+    deck = max(0, 4 + logs_bucked - loads); loaded = min(8, loads)
+    for i in range(deck):
+        row, col = divmod(i, 3)
+        log(ctx, DECK_X + col * 12, gy(DECK_X) - 8 - row * 12, 88, 11, 0)
+    # processor
+    excavator(ctx, P_X, py, 0.85, C["lime"], draw_boom=False)
+    proot = (P_X - 8, py - 62)
+    pm = ((proot[0] + tip[0]) / 2, (proot[1] + tip[1]) / 2); pdx, pdy = tip[0] - proot[0], tip[1] - proot[1]; pl = math.hypot(pdx, pdy) or 1
+    boom(ctx, [proot, (pm[0] + pdy / pl * 60, pm[1] - pdx / pl * 60), tip], 8)
+    harvest_head(ctx, tip[0], tip[1] + 8, math.pi / 2, 0.8)
+    # loader: grab at the deck, swing to the truck, release, return (3 s cycle)
+    ly = gy(L_X)
+    deck_pt = (DECK_X + 12, gy(DECK_X) - 60); truck_pt = (TR_X - 20, gy(TR_X) - 110)
+    if lc < 0.35: u = 0.0; carry = False; closed = lc / 0.35
+    elif lc < 1.6: u = ease_in_out((lc - 0.35) / 1.25); carry = True; closed = 1.0
+    elif lc < 1.9: u = 1.0; carry = False; closed = 1 - (lc - 1.6) / 0.3
+    else: u = 1 - ease_in_out((lc - 1.9) / 1.1); carry = False; closed = 0.0
+    if deck == 0: carry = False
+    ltip = (deck_pt[0] + (truck_pt[0] - deck_pt[0]) * u, deck_pt[1] + (truck_pt[1] - deck_pt[1]) * u - 60 * math.sin(math.pi * u))
+    excavator(ctx, L_X, ly, 0.85, C["aqua"], draw_boom=False)
+    lroot = (L_X - 8, ly - 62); lm = ((lroot[0] + ltip[0]) / 2, (lroot[1] + ltip[1]) / 2)
+    ldx, ldy = ltip[0] - lroot[0], ltip[1] - lroot[1]; ll = math.hypot(ldx, ldy) or 1
+    elbow = (lm[0] + ldy / ll * 60, lm[1] - ldx / ll * 60)
+    if elbow[1] > lm[1]: elbow = (lm[0] - ldy / ll * 60, lm[1] + ldx / ll * 60)
+    boom(ctx, [lroot, elbow, ltip], 8)
+    if carry: log(ctx, ltip[0], ltip[1] + 30, 88, 11, 0)
+    grapple(ctx, ltip[0], ltip[1], 1.0, closed)
+    log_truck(ctx, TR_X, gy(TR_X), 0.7, logs=loaded)
+    # ---- skidder: drives out facing left, turns, grapples the butts, hauls right with the trees trailing behind
+    if sk:
+        sx, st, j, c = sk; sy = gy(sx); stilt = -math.atan2(g_ground(sx - 40) - g_ground(sx + 40), 80)
+        facing_left = st == "out" or (st == "turn" and (c - GS_OUT) / GS_TURN < 0.5)
+        if st in ("grab", "haul"):
+            fx, fy = rotp(sx - 92, sy - 40, sx, sy, stilt)
+            grabbed = st == "haul" or (c - GS_OUT - GS_TURN) / GS_GRAB > 0.5
+            if grabbed:
+                for i in range(2):
+                    txl = fx - 150 - i * 8; tyl = g_ground(txl) - 4 - i * 6
+                    ang = math.atan2(txl - fx, -(tyl - fy))
+                    ctx.save(); ctx.translate(fx + i * 4, fy - i * 6); ctx.rotate(ang)
+                    conifer(ctx, 0, 0, 150 + 20 * i, 1.0, seed=20 + 2 * j + i, sway_t=0, tiers=10); ctx.restore()
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(stilt)
+        if facing_left: ctx.scale(-1, 1)
+        skidder(ctx, 0, 0, 0.85, logs=0, bounce=math.sin(T * 16) * (1 if st in ("out", "haul") else 0))
+        ctx.restore()
+    # ---- feller-buncher (drawn last so it sits in front of its bunch)
+    hp = ease_out_cubic(seg(t, 0.2, 1.0))
+    if hp > 0:
+        bob = math.sin(T * 18) * (1.2 if phase == "travel" else 0)
+        ctx.save(); ctx.translate(hx, hy + bob); ctx.rotate(tilt); ctx.translate(-hx, -hy - bob)
+        excavator(ctx, hx, hy + bob, 0.85, C["lime"], draw_boom=False, alpha=hp, roll=-hx * 0.8)
+        ctx.restore()
+        root = rotp(hx - 8, hy - 62 + bob, hx, hy, tilt); carry_tip = rotp(hx - 96, hy - 40, hx, hy, tilt)
+        head_ang = tilt; spin = 0.0; tip = carry_tip
+        if phase not in ("idle", "travel"):
+            tx = G_TREES[k]; ty = gy(tx); grip_tip = (tx + 2, ty - 30)
+            if phase == "grip":
+                e = ease_in_out(pp); tip = (carry_tip[0] + (grip_tip[0] - carry_tip[0]) * e, carry_tip[1] + (grip_tip[1] - carry_tip[1]) * e); head_ang = tilt * (1 - e)
+            elif phase == "cut": tip = grip_tip; head_ang = 0.0; spin = T * 40
+            elif phase == "lay":
+                ang = G_LAY * ease_in_out(pp); tip = rotp(grip_tip[0], grip_tip[1], tx, ty, ang); head_ang = ang
+            else:
+                laid = rotp(grip_tip[0], grip_tip[1], tx, ty, G_LAY); e = ease_in_out(pp)
+                tip = (laid[0] + (carry_tip[0] - laid[0]) * e, laid[1] + (carry_tip[1] - laid[1]) * e); head_ang = G_LAY * (1 - e) + tilt * e
+        mx, my = (root[0] + tip[0]) / 2, (root[1] + tip[1]) / 2
+        dx, dy = tip[0] - root[0], tip[1] - root[1]; ln = math.hypot(dx, dy) or 1
+        elbow = (mx + dy / ln * 55, my - dx / ln * 55)
+        if elbow[1] > my: elbow = (mx - dy / ln * 55, my + dx / ln * 55)
+        boom(ctx, [root, elbow, tip], 8, hp)
+        fb_head(ctx, tip[0], tip[1], head_ang, 0.85, spin, hp)
+        label_tag(ctx, hx, hy - 150, "Feller-buncher", seg(t, 4.6, 5.4) * (1 - seg(t, 8.0, 8.8)), C["lime"], "center")
+    if sk and sk[1] in ("haul",):
+        label_tag(ctx, sk[0], gy(sk[0]) - 118, "Skidder", seg(t, 10.0, 10.8) * (1 - seg(t, 11.4, 12.2)), C["lime"], "center")
+    # ---- captions
+    left_panel(ctx, 700, 700)
+    eyebrow(ctx, "System 1 of 3", 120, 200, seg(t, 0.2, 0.9))
+    reveal_text(ctx, "Ground-based.", 120, 300, 84, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
+    reveal_text(ctx, "Machines drive to the tree.", 120, 360, 30, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+    bullets(ctx, [("Gentle ground, under ~35% slope", 3.0), ("Feller-buncher cuts and bunches", 5.0), ("Skidder drags bunches to the road", 9.0),
+                  ("Processor bucks, loader fills the truck", 13.0), ("Short cycles – the lowest cost per m³", 17.0)], 120, 450, t)
+    slope_marker(ctx, 330, g_ground(330) + 90, 200, 20, seg(t, 3.2, 4.0), "≈10–35%")
+    label_tag(ctx, P_X - 20, py - 150, "Processor", seg(t, 13.2, 14.0) * (1 - seg(t, 16.0, 16.8)), C["lime"], "center")
+    label_tag(ctx, L_X, ly - 150, "Loader", seg(t, 13.8, 14.6) * (1 - seg(t, 16.6, 17.4)), C["aqua2"], "center")
+
+# ----------------------------------------------------------------------------- 3. cable yarding (30-55)
+def g_cable(x): return 430 + (1150 - min(x, 1500)) * 0.42 * clamp((1500 - x) / 1300) ** 0.9 * (1 if x < 1500 else 0) + (0 if x < 1500 else 0)
+
+def g_steep(x):
+    # road bench on the right at y=430, steep slope descending to the left to ~y=990
+    if x >= 1480: return 430
+    u = (1480 - x) / 1300
+    return 430 + 560 * min(1, u) ** 0.95 + 10 * math.sin(x * 0.01)
+
+def crew_figure(ctx, px, py, alpha=1.0):
+    set_col(ctx, C["amber"], alpha); ctx.new_path(); ctx.arc(px, py - 34, 6, 0, 2 * math.pi); ctx.fill()
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(3); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    ctx.move_to(px, py - 28); ctx.line_to(px, py - 10); ctx.move_to(px, py - 10); ctx.line_to(px - 6, py); ctx.move_to(px, py - 10); ctx.line_to(px + 6, py); ctx.stroke()
+
+CY_X = 1690                                  # yarder position on the road
+CY_TAIL = (150, None)                        # tail tree at the bottom of the slope
+CY_TREES = [260, 400, 560, 700, 860, 1020]   # trees taken, one per turn, working uphill
+CY_START = 3.0; CY_CYC = 8.0                 # out 3.0, hook 1.0, in 3.5, unhook 0.5
+CY_TREE_H = 170
+
+def skyline_pt(top, tail, u):
+    """point on the sagging skyline, u = 0 at the tail, 1 at the yarder"""
+    s0 = 1 - u
+    return tail[0] + (top[0] - tail[0]) * u, (1 - s0) ** 2 * top[1] + 2 * (1 - s0) * s0 * ((top[1] + tail[1]) / 2 + 40) + s0 ** 2 * tail[1]
+
+def s_cable(ctx, t, T):
+    paper_bg(ctx, T, 0.7)
+    terrain(ctx, g_steep)
+    road(ctx, g_steep, 1480, W + 20)
+    yp = ease_out_cubic(seg(t, 0.3, 1.2))
+    tail_x = CY_TAIL[0]; tail = (tail_x, g_steep(tail_x) - CY_TREE_H * 0.8)
+    top = (CY_X - 30 * 0.95, g_steep(CY_X) + 2 - 330 * 0.95)
+    # ---- turn bookkeeping
+    k = int((t - CY_START) // CY_CYC) if t >= CY_START else -1
+    cyc = (t - CY_START) % CY_CYC if t >= CY_START else 0.0
+    k = min(k, len(CY_TREES) - 1)
+    turns_done = sum(1 for j in range(len(CY_TREES)) if t >= CY_START + j * CY_CYC + 7.5)
+    # ---- trees: standing → felled (tipped downhill 2 s before its turn) → hooked away during the hook phase
+    for i in range(6):   # far trees below the tail tree area / decorative, never taken
+        tx = 1150 + i * 50 + (hsh(i, 3) - 0.5) * 20
+        conifer(ctx, tx, g_steep(tx), 100 + 40 * hsh(i, 4), 1.0, seed=40 + i, sway_t=T, tiers=9, alpha=0.85)
+    for j, tx in enumerate(CY_TREES):
+        ty = g_steep(tx); hgt = 130 + 50 * hsh(j, 5); t_turn = CY_START + j * CY_CYC
+        fell = seg(t, t_turn - 1.4, t_turn - 0.4)
+        hooked = seg(t, t_turn + 3.0, t_turn + 4.0)
+        if hooked >= 1: stump(ctx, tx, ty, 11); continue
+        if fell > 0: stump(ctx, tx, ty, 11)
+        ctx.save(); ctx.translate(tx, ty); ctx.rotate(LAY_A * ease_in_out(fell)); ctx.translate(-tx, -ty)
+        conifer(ctx, tx, ty, hgt, 1.0, seed=50 + j, sway_t=T if fell == 0 else 0, tiers=10, alpha=1 - hooked); ctx.restore()
+    # tail tree with the skyline block near its top
+    conifer(ctx, tail_x, g_steep(tail_x), CY_TREE_H, 1.0, seed=99, sway_t=0, tiers=11)
+    # ---- yarder + skyline
+    yarder(ctx, CY_X, g_steep(CY_X) + 2, 0.95, alpha=yp)
+    sl = ease_in_out(seg(t, 1.0, 2.6))
+    if sl > 0:
+        end = (top[0] + (tail[0] - top[0]) * sl, top[1] + (tail[1] - top[1]) * sl)
+        cable(ctx, top, end, sag=40 * sl, lw=2.4, alpha=yp)
+        if sl >= 1:
+            set_col(ctx, NAVY); ctx.new_path(); ctx.arc(tail[0], tail[1], 5, 0, 2 * math.pi); ctx.fill()
+        sx_, sy_ = skyline_pt(top, tail, 0.62)
+        label_tag(ctx, sx_, sy_ - 22, "Skyline", seg(t, 2.4, 3.2), C["aqua2"], "center")
+        label_tag(ctx, tail_x + 34, tail[1] - 4, "Tail tree anchor", seg(t, 2.6, 3.4), C["aqua2"], "left")
+    # ---- carriage: out to the felled tree, hook, in loaded, unhook at the road
+    if t >= CY_START and sl >= 1:
+        tx = CY_TREES[k]; u_k = (tx + 20 - tail[0]) / (top[0] - tail[0])
+        if cyc < 3.0: u = 1 - (1 - u_k) * ease_in_out(cyc / 3.0); drop = 0; logs = ()
+        elif cyc < 4.0: u = u_k; drop = 1; logs = ()
+        elif cyc < 7.5: u = u_k + (1 - u_k) * ease_in_out((cyc - 4.0) / 3.5); drop = 1 - 0.7 * ease_in_out((cyc - 4.0) / 3.5); logs = [(110, 12, 0.5, -10, 10), (110, 11, 0.6, 14, 16), (100, 10, 0.45, 2, 28)]
+        else: u = 1; drop = 0; logs = ()
+        cx, cy = skyline_pt(top, tail, u)
+        max_drop = max(20, g_steep(cx) - cy - 56)
+        dpx = min(90, max_drop) * ease_in_out(clamp((cyc - 3.0) / 0.8)) if cyc < 4.0 else min(90, max_drop) * drop
+        if cyc >= 4.0 and cyc < 7.5: logs = [(110, 12, 0.5, -10, 10), (110, 11, 0.6, 14, 16), (100, 10, 0.45, 2, 28)]
+        carriage(ctx, cx, cy, 1.0, dpx, logs)
+        cable(ctx, (cx, cy), (top[0] + 6, top[1] + 8), sag=14, lw=1.4, alpha=0.7)
+        # chokermen work at the hook point
+        for m in range(2):
+            px = tx + 40 + m * 44 + 5 * math.sin(T * 2 + m); crew_figure(ctx, px, g_steep(px))
+        label_tag(ctx, tx + 62, g_steep(tx + 62) - 62, "Rigging crew", seg(t, 8.0, 8.8) * (1 - seg(t, 11.5, 12.3)), C["amber"], "center")
+    # ---- deck on the road between the crest and the yarder
+    for i in range(min(9, turns_done * 3)):
+        row, col = divmod(i, 3)
+        log(ctx, 1545 + col * 10, 430 - 9 - row * 12, 90, 11, 0)
+    left_panel(ctx, 720, 700)
+    eyebrow(ctx, "System 2 of 3", 120, 200, seg(t, 0.2, 0.9))
+    reveal_text(ctx, "Cable yarding.", 120, 300, 84, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
+    reveal_text(ctx, "The tree comes to the machine.", 120, 360, 30, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+    bullets(ctx, [("Steep ground, roughly 35–60%+", 3.5), ("Yarder stays on the road; fallers work ahead", 5.5), ("Skyline + carriage pull each turn uphill", 8.5),
+                  ("Bigger crew: operator, chokers, chaser", 12.0), ("Longer cycles – a higher cost per m³", 16.0)], 120, 450, t)
+    slope_marker(ctx, 420, g_steep(420) + 40, 160, 100, seg(t, 3.7, 4.5), "≈45%")
+
+# ----------------------------------------------------------------------------- 4. tethered (55-75)
+def rotp(px, py, cx, cy, a):
+    """rotate (px, py) about (cx, cy) by a (cairo convention: positive = clockwise on screen)"""
+    dx, dy = px - cx, py - cy
+    return cx + dx * math.cos(a) - dy * math.sin(a), cy + dx * math.sin(a) + dy * math.cos(a)
+
+def grapple(ctx, x, y, s=1.0, closed=0.0, alpha=1.0):
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(3 * s); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    spread = 24 * s * (1 - 0.55 * closed)
+    for sd in (-1, 1):
+        ctx.move_to(x, y); ctx.curve_to(x + sd * spread, y + 10 * s, x + sd * spread * 0.9, y + 30 * s, x + sd * 6 * s, y + 36 * s); ctx.stroke()
+
+def harvest_head(ctx, x, y, ang, s=1.0, alpha=1.0):
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang)
+    rrect(ctx, -13 * s, -26 * s, 26 * s, 52 * s, 5); stroke_fill(ctx, C["paper2"], alpha=alpha)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(2)
+    for k in (-1, 1): ctx.move_to(-13 * s, k * 12 * s); ctx.line_to(13 * s, k * 12 * s)
+    ctx.stroke(); ctx.restore()
+
+def winch_dozer(ctx, x, y, alpha=1.0):
+    """small tracked winch-assist unit: blade dug in on the right, winch drum on the slope side; returns drum point"""
+    tracks(ctx, x, y, 120, 32, alpha)
+    body(ctx, x - 52, y - 32, 100, 26, alpha)
+    cab(ctx, x - 26, y - 58, 44, 34, C["aqua"], alpha)
+    boom(ctx, [(x + 40, y - 40), (x + 82, y - 30)], 7, alpha)
+    ctx.move_to(x + 78, y - 44); ctx.line_to(x + 96, y - 40); ctx.line_to(x + 92, y + 4); ctx.line_to(x + 76, y + 2); ctx.close_path(); stroke_fill(ctx, C["paper2"], alpha=alpha)
+    d = (x - 62, y - 44)
+    ctx.new_path(); ctx.arc(d[0], d[1], 13, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
+    ctx.new_path(); ctx.arc(d[0], d[1], 5, 0, 2 * math.pi); set_col(ctx, NAVY, alpha); ctx.fill()
+    return d
+
+def fb_head(ctx, x, y, ang, s=1.0, spin=0.0, alpha=1.0):
+    """feller-buncher head: accumulator frame with a disc saw at its foot; pivot at the grip point"""
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang)
+    rrect(ctx, -11 * s, -34 * s, 22 * s, 46 * s, 5); stroke_fill(ctx, C["paper2"], alpha=alpha)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(2.5 * s)
+    for k in (-1, 1): ctx.move_to(k * 11 * s, -26 * s); ctx.line_to(k * 24 * s, -18 * s); ctx.line_to(k * 20 * s, -4 * s)   # arms
+    ctx.stroke()
+    ctx.new_path(); ctx.arc(0, 16 * s, 19 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], lw=2, alpha=alpha)
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(1.8)
+    for k in range(6):
+        aa = spin + k * math.pi / 3
+        ctx.move_to(11 * s * math.cos(aa), 16 * s + 11 * s * math.sin(aa)); ctx.line_to(19 * s * math.cos(aa), 16 * s + 19 * s * math.sin(aa))
+    ctx.stroke(); ctx.restore()
+
+SLOPE_A = math.atan(0.43)                 # ground angle of g_steep on the working face (≈23°)
+LAY_A = -(math.pi / 2 + SLOPE_A)          # a stem laid downhill along the slope (top pointing downhill, butt at the stump)
+G_OFF = 170                               # this scene's crest sits 170 px further left than the cable scene's
+def g_teth(x): return g_steep(x + G_OFF)
+CREST = 1480 - G_OFF
+T_TREES = [1160 - k * 100 for k in range(9)]   # buncher works these down the slope, in order
+T_START = 1.6
+T_CYC = [4.2] + [2.7] * 8                 # first cycle deliberately slow so it reads
+T_ST = [T_START + sum(T_CYC[:k]) for k in range(len(T_CYC))]
+PH = (0.30, 0.15, 0.14, 0.30, 0.11)       # travel, grip, cut, lay, release (fractions of a cycle)
+S_TRIPS = [9.2, 15.2, 21.2]               # skidder trips: trees (0,1), (2,3), (4,5) — always ≥2 trees behind the buncher
+S_DESC, S_GRAB, S_CLIMB, S_DROP = 2.6, 0.6, 2.6, 0.6
+S_ROAD = 1550
+BUNCH_OFF = (-26, 30)                     # laid stems sit beside the trail, drawn a little nearer the viewer
+DRAG_LEN = 125
+
+def tree_state(j, t):
+    """-> (phase, progress) for tree j: stand | grip | cut | lay | release | done"""
+    c = t - T_ST[j]; L = T_CYC[j]
+    if c < 0: return "stand", 0.0
+    names = ("stand", "grip", "cut", "lay", "release"); e0 = 0.0
+    for name, f in zip(names, PH):
+        e1 = e0 + L * f
+        if c < e1: return name, (c - e0) / (e1 - e0)
+        e0 = e1
+    return "done", 1.0
+
+def drag_trees(ctx, sx, sy, stilt, seeds, alpha=1.0):
+    """two stems in the grapple behind a skidder at (sx, sy): butts lifted, tops trailing on the ground"""
+    fx, fy = rotp(sx - 92, sy - 40, sx, sy, stilt)
+    for i, sd in enumerate(seeds):
+        txl = fx - DRAG_LEN - i * 8; tyl = g_teth(txl) - 4 - i * 6
+        ang = math.atan2(txl - fx, -(tyl - fy))
+        ctx.save(); ctx.translate(fx + i * 4, fy - i * 6); ctx.rotate(ang)
+        conifer(ctx, 0, 0, DRAG_LEN + 20 * i, 1.0, seed=sd, sway_t=0, tiers=10, alpha=alpha); ctx.restore()
+
+def over_crest(ctx, drum, att, col, lw, alpha=1.0):
+    """winch line from a drum on the road to a machine on the slope, routed over the road edge"""
+    if att[0] < CREST - 30:
+        roller = (CREST + 4, g_teth(CREST + 4) - 4)
+        cable(ctx, drum, roller, sag=4, lw=lw, col=col, alpha=alpha)
+        cable(ctx, roller, att, sag=8, lw=lw, col=col, alpha=alpha)
+    else:
+        cable(ctx, drum, att, sag=8, lw=lw, col=col, alpha=alpha)
+
+def s_tether(ctx, t, T):
+    paper_bg(ctx, T, 0.7)
+    terrain(ctx, g_teth)
+    road(ctx, g_teth, CREST, W + 20)
+    ax = 1852; ay = g_teth(ax) + 2; drum_h = (ax - 50, ay - 50)      # buncher anchor (compact excavator, bucket dug in)
+    dz = 1696; dy_ = g_teth(dz) + 2; drum_s = (dz - 62, dy_ - 44)     # skidder anchor (winch dozer)
+    # ---- buncher position: parks just uphill of each tree
+    k = max([i for i in range(len(T_TREES)) if t >= T_ST[i]], default=-1)
+    if k < 0:
+        hx = 1280.0; phase, pp = "idle", 0.0
+    else:
+        phase, pp = tree_state(k, t)
+        goal = T_TREES[k] + 110; prev = 1280.0 if k == 0 else T_TREES[k - 1] + 110
+        hx = prev + (goal - prev) * ease_in_out(pp) if phase == "stand" else goal
+        if phase == "stand": phase = "travel"
+        if phase == "done": phase = "release"; pp = 1.0
+    hy = g_teth(hx) + 2
+    tilt = -math.atan2(g_teth(hx - 40) - g_teth(hx + 40), 80)   # counter-clockwise → downhill (left) end sits lower
+    # ---- skidder trips (first, so bunches know whether they have been picked up)
+    sk = None; picked = set(); delivered = []
+    for j, s0 in enumerate(S_TRIPS):
+        if t < s0 - 0.8: break
+        goal = T_TREES[2 * j] + 95; c = t - s0   # grapple at the butt of the uphill tree of the pair
+        if c < 0: sx = S_ROAD; loaded = False; st = "arrive"
+        elif c < S_DESC: sx = S_ROAD + (goal - S_ROAD) * ease_in_out(c / S_DESC); loaded = False; st = "desc"
+        elif c < S_DESC + S_GRAB: sx = goal; loaded = (c - S_DESC) / S_GRAB > 0.5; st = "grab"
+        elif c < S_DESC + S_GRAB + S_CLIMB: sx = goal + (S_ROAD - goal) * ease_in_out((c - S_DESC - S_GRAB) / S_CLIMB); loaded = True; st = "climb"
+        elif c < S_DESC + S_GRAB + S_CLIMB + S_DROP: sx = S_ROAD; loaded = (c - S_DESC - S_GRAB - S_CLIMB) / S_DROP < 0.5; st = "drop"
+        else: sx = S_ROAD; loaded = False; st = "wait"
+        sk = (sx, loaded, st, j, c)
+        if c >= S_DESC + S_GRAB * 0.5: picked.update((2 * j, 2 * j + 1))
+        if c >= S_DESC + S_GRAB + S_CLIMB + S_DROP * 0.5: delivered.append(j)
+    # ---- untouched trees further down the slope
+    for i in range(6):
+        tx = 60 + i * 66 + (hsh(i, 5) - 0.5) * 30; conifer(ctx, tx, g_teth(tx), 120 + 60 * hsh(i, 6), 1.0, seed=60 + i, sway_t=T, tiers=10)
+    # ---- worked trees: stumps + standing/cutting trees (laid bunches are drawn later, in front of the machines)
+    states = [(j, tx, g_teth(tx), 140 + 40 * hsh(j, 7)) + tree_state(j, t) for j, tx in enumerate(T_TREES)]
+    for j, tx, ty, hgt, ph, p in states:
+        if ph not in ("stand", "grip", "cut"): stump(ctx, tx, ty, 11); continue
+        conifer(ctx, tx, ty, hgt, 1.0, seed=70 + j, sway_t=T if ph == "stand" else 0, tiers=10)
+        if ph == "cut":   # saw at the base: sparks
+            set_col(ctx, C["amber"], 0.9); ctx.set_line_width(3)
+            for m in range(5):
+                aa = -0.3 - m * 0.5 + p * 2; ctx.move_to(tx - 4, ty - 6); ctx.line_to(tx - 4 + 18 * math.cos(aa), ty - 6 + 18 * math.sin(aa))
+            ctx.stroke()
+    # ---- winch lines first (machines and anchors draw over them)
+    ap = ease_out_cubic(seg(t, 0.3, 1.2)); hp = ease_out_cubic(seg(t, 0.6, 1.4))
+    if hp > 0:
+        att = rotp(hx + 50, hy - 14, hx, hy, tilt)
+        over_crest(ctx, drum_h, att, C["green2"], 2.6, hp)
+    if sk:
+        sx, loaded, st, j, c = sk; sy = g_teth(sx) + 2
+        stilt = -math.atan2(g_teth(sx - 40) - g_teth(sx + 40), 80) if sx < CREST - 10 else 0.0
+        satt = rotp(sx + 70, sy - 16, sx, sy, stilt)
+        over_crest(ctx, drum_s, satt, C["aqua2"], 2.4, seg(t, S_TRIPS[0] - 0.8, S_TRIPS[0] - 0.2))
+    # ---- anchors on the road
+    excavator(ctx, ax, ay, 0.8, C["green"], draw_boom=False, alpha=ap)
+    boom(ctx, [(ax + 8, ay - 60), (ax + 40, ay - 100), (ax + 52, ay - 4)], 8, ap)
+    rrect(ctx, ax + 38, ay - 12, 28, 20, 4); stroke_fill(ctx, C["paper2"], alpha=ap)
+    ctx.new_path(); ctx.arc(drum_h[0], drum_h[1], 13, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=ap)
+    ctx.new_path(); ctx.arc(drum_h[0], drum_h[1], 5, 0, 2 * math.pi); set_col(ctx, NAVY, ap); ctx.fill()
+    label_tag(ctx, ax - 40, ay - 150, "Anchor + winch", seg(t, 1.2, 2.0), C["green2"], "center")
+    dp = ease_out_cubic(seg(t, 7.2, 8.0))
+    if dp > 0:
+        winch_dozer(ctx, dz, dy_, dp)
+        label_tag(ctx, dz - 20, dy_ - 105, "Skidder anchor", seg(t, 7.6, 8.4), C["aqua2"], "center")
+    # ---- roadside deck: dropped drags stay exactly where the skidder released them
+    for j in delivered:
+        drag_trees(ctx, S_ROAD, g_teth(S_ROAD) + 2 - 4 * j, 0.0, (70 + 2 * j, 70 + 2 * j + 1))
+    # ---- skidder: faces uphill; backs down, grapples two butts, drives up with the stems trailing
+    if sk:
+        sx, loaded, st, j, c = sk; sy = g_teth(sx) + 2
+        stilt = -math.atan2(g_teth(sx - 40) - g_teth(sx + 40), 80) if sx < CREST - 10 else 0.0
+        sa = seg(t, S_TRIPS[0] - 0.8, S_TRIPS[0] - 0.2)
+        if loaded: drag_trees(ctx, sx, sy, stilt, (70 + 2 * j, 70 + 2 * j + 1))
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(stilt); ctx.translate(-sx, -sy)
+        bounce = math.sin(T * 16) * (1 if st in ("desc", "climb") else 0)
+        skidder(ctx, sx, sy, 0.85, logs=0, bounce=bounce, alpha=sa)
+        ctx.restore()
+        if st in ("desc", "grab"):
+            label_tag(ctx, sx, sy - 118, "Same skidder, on its own line", seg(t, 9.6, 10.4) * (1 - seg(t, 11.6, 12.4)), C["aqua2"], "center")
+    # ---- feller-buncher: base rotated to the slope, boom/head placed in world space so the head meets the tree
+    if hp > 0:
+        bob = math.sin(T * 18) * (1.2 if phase == "travel" else 0)
+        ctx.save(); ctx.translate(hx, hy + bob); ctx.rotate(tilt); ctx.translate(-hx, -hy - bob)
+        excavator(ctx, hx, hy + bob, 0.85, C["green"], draw_boom=False, alpha=hp, roll=-hx * 0.8)
+        ctx.restore()
+        root = rotp(hx - 8, hy - 62 + bob, hx, hy, tilt)
+        carry_tip = rotp(hx - 96, hy - 40, hx, hy, tilt)
+        head_ang = tilt; spin = 0.0; tip = carry_tip
+        if phase not in ("idle", "travel"):
+            tx = T_TREES[k]; ty = g_teth(tx)
+            grip_tip = (tx + 2, ty - 30)
+            if phase == "grip":
+                e = ease_in_out(pp); tip = (carry_tip[0] + (grip_tip[0] - carry_tip[0]) * e, carry_tip[1] + (grip_tip[1] - carry_tip[1]) * e); head_ang = tilt * (1 - e)
+            elif phase == "cut":
+                tip = grip_tip; head_ang = 0.0; spin = T * 40
+            elif phase == "lay":
+                ang = LAY_A * ease_in_out(pp); tip = rotp(grip_tip[0], grip_tip[1], tx, ty, ang); head_ang = ang
+            else:   # release: head lifts back to carry
+                laid = rotp(grip_tip[0], grip_tip[1], tx, ty, LAY_A); e = ease_in_out(pp)
+                tip = (laid[0] + (carry_tip[0] - laid[0]) * e, laid[1] + (carry_tip[1] - laid[1]) * e); head_ang = LAY_A * (1 - e) + tilt * e
+        mx, my = (root[0] + tip[0]) / 2, (root[1] + tip[1]) / 2
+        dx, dy = tip[0] - root[0], tip[1] - root[1]; ln = math.hypot(dx, dy) or 1
+        elbow = (mx + dy / ln * 55, my - dx / ln * 55)
+        if elbow[1] > my: elbow = (mx - dy / ln * 55, my + dx / ln * 55)
+        boom(ctx, [root, elbow, tip], 8, hp)
+        fb_head(ctx, tip[0], tip[1], head_ang, 0.85, spin, hp)
+        label_tag(ctx, hx, hy - 150, "Tethered feller-buncher", seg(t, 3.0, 3.8) * (1 - seg(t, 7.0, 7.8)), C["green2"], "center")
+    # ---- laid stems: being laid (at the stump, main plane) or resting beside the trail (near plane, in front)
+    for j, tx, ty, hgt, ph, p in states:
+        if ph in ("stand", "grip", "cut") or j in picked: continue
+        if ph == "lay":
+            ctx.save(); ctx.translate(tx, ty); ctx.rotate(LAY_A * ease_in_out(p)); ctx.translate(-tx, -ty)
+            conifer(ctx, tx, ty, hgt, 1.0, seed=70 + j, sway_t=0, tiers=10); ctx.restore()
+        else:
+            e = ease_in_out(p) if ph == "release" else 1.0
+            ox, oy = BUNCH_OFF[0] * e, BUNCH_OFF[1] * e
+            ctx.save(); ctx.translate(tx + ox, ty + oy); ctx.rotate(LAY_A); ctx.translate(-tx - ox, -ty - oy)
+            conifer(ctx, tx + ox, ty + oy, hgt, 1.0, seed=70 + j, sway_t=0, tiers=10); ctx.restore()
+    left_panel(ctx, 720, 700)
+    eyebrow(ctx, "System 3 of 3", 120, 200, seg(t, 0.2, 0.9))
+    reveal_text(ctx, "Tethered.", 120, 300, 84, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
+    reveal_text(ctx, "A winch line gives the machine traction and stability.", 120, 360, 30, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+    bullets(ctx, [("Anchor on the road keeps the winch line tight", 2.5), ("Feller-buncher cuts each tree and lays it in a bunch", 5.5), ("Tethered skidder drags the bunch up to the road", 10.5),
+                  ("Bucked and loaded at roadside, as before", 15.5), ("Safer than hand falling; more machines to own and move", 20.0)], 120, 450, t)
+    slope_marker(ctx, 300, g_teth(300) + 40, 160, 100, seg(t, 3.2, 4.0) * (1 - seg(t, 17.5, 18.3)), "≈40–60%")
+
+# ----------------------------------------------------------------------------- 5. piece size economics (75-100)
+def s_piece(ctx, t, T):
+    taupe_bg(ctx, T)
+    # left: two turns under a carriage
+    reveal_text(ctx, "Every turn costs the same.", 120, 200, 72, C["white"], seg(t, 0.3, 1.1), fam="Jost Light")
+    reveal_text(ctx, "Whether the carriage carries three big logs or eight small ones, the yarder, the crew", 120, 258, 26, C["white"], seg(t, 1.0, 1.8), fam="Jost Light", alpha=0.92)
+    reveal_text(ctx, "and the clock cost the same — but the cubic metres per turn are very different.", 120, 296, 26, C["white"], seg(t, 1.2, 2.0), fam="Jost Light", alpha=0.92)
+    for k, (title, logs, vol) in enumerate([("Large pieces", [(150, 22)] * 3, "3 × 1.0 m³  =  3.0 m³"), ("Small pieces", [(120, 11)] * 8, "8 × 0.25 m³  =  2.0 m³")]):
+        p = seg(t, 2.4 + k * 1.2, 3.2 + k * 1.2)
+        if p <= 0: continue
+        e = ease_out_cubic(p); x = 300 + k * 420; y = 420
+        ctx.save(); ctx.translate(0, (1 - e) * 20)
+        set_col(ctx, C["white"], 0.96 * e); rrect(ctx, x - 170, y - 40, 340, 400, 20); ctx.fill()
+        text(ctx, title, x, y, 26, NAVY, fam="Jost Medium", align="center", alpha=e)
+        cable(ctx, (x - 170, y + 40), (x + 170, y + 40), sag=6, lw=2, alpha=e)
+        carriage(ctx, x, y + 44, 0.9, 104)
+        set_col(ctx, NAVY, e); ctx.set_line_width(2); ctx.new_path(); ctx.arc(x, y + 44 + 12.6 + 104 + 5, 5, 0, 2 * math.pi); ctx.stroke()   # choker ring
+        for i, (L, d) in enumerate(logs):
+            lp = seg(t, 3.0 + k * 1.2 + i * 0.12, 3.5 + k * 1.2 + i * 0.12)
+            if lp <= 0: continue
+            ang = 1.15; ox = (i - (len(logs) - 1) / 2) * (d + 6); oy = 100 + 90
+            log(ctx, x + ox * 0.5, y + oy + (1 - ease_out_cubic(lp)) * -30, L, d, ang, ease_out_cubic(lp))
+        text(ctx, vol, x, y + 330, 22, C["aqua2"], fam="Jost SemiBold", align="center", alpha=e * ease_out_cubic(seg(t, 3.5 + k * 1.2 + len(logs) * 0.12, 4.0 + k * 1.2 + len(logs) * 0.12)))
+        ctx.restore()
+    # right: cost curve. cost per m3 ∝ 1 / (m3 per turn)
+    cp = seg(t, 5.0, 6.0)
+    if cp > 0:
+        e = ease_out_cubic(cp); x0, y0, w, h = 1160, 900, 620, 480
+        set_col(ctx, C["white"], 0.96 * e); rrect(ctx, x0 - 70, y0 - h - 110, w + 130, h + 190, 20); ctx.fill()
+        text(ctx, "COST PER CUBIC METRE  vs  PIECE SIZE", x0, y0 - h - 60, 15, C["grey"], fam="Jost Medium", tracking=3, alpha=e)
+        set_col(ctx, C["mute"], e); ctx.set_line_width(1.5); ctx.move_to(x0, y0 - h); ctx.line_to(x0, y0); ctx.line_to(x0 + w, y0); ctx.stroke()
+        text(ctx, "piece size (m³)  →", x0 + w / 2, y0 + 58, 15, C["grey"], fam="Jost Medium", align="center", alpha=e)
+        ctx.save(); ctx.translate(x0 - 22, y0 - h / 2); ctx.rotate(-math.pi / 2); text(ctx, "cost / m³  →", 0, 0, 15, C["grey"], fam="Jost Medium", align="center", alpha=e); ctx.restore()
+        def curve(u):   # u: 0 (0.1 m3) .. 1 (1.2 m3)
+            m3 = 0.1 + 1.1 * u; c = 1 / m3 / (1 / 0.1)   # normalised
+            return x0 + w * u, y0 - h * (0.06 + 0.9 * (c ** 0.55))
+        draw = ease_in_out(seg(t, 5.6, 8.0))
+        set_col(ctx, C["aqua2"], e); ctx.set_line_width(4); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+        for k in range(int(80 * draw) + 1):
+            px, py = curve(1 - k / 80)
+            (ctx.move_to if k == 0 else ctx.line_to)(px, py)
+        ctx.stroke()
+        for u, lab in ((0.82, "1.0"), (0.36, "0.5"), (0.14, "0.25")):
+            px, _ = curve(u); text(ctx, lab, px, y0 + 24, 14, C["grey"], fam="Jost", align="center", alpha=e)
+        # slider marker sweeping from large to small
+        mu = 0.818 - 0.67 * ease_in_out(seg(t, 8.5, 16.0))
+        if t > 8.0:
+            px, py = curve(mu); m3 = 0.1 + 1.1 * mu; ratio = (1.0 / m3)
+            set_col(ctx, C["aqua2"], 0.25); ctx.new_path(); ctx.arc(px, py, 22, 0, 2 * math.pi); ctx.fill()
+            set_col(ctx, NAVY); ctx.new_path(); ctx.arc(px, py, 8, 0, 2 * math.pi); ctx.fill()
+            set_col(ctx, C["mute"], 0.7); ctx.set_line_width(1); ctx.set_dash([4, 4]); ctx.move_to(px, py); ctx.line_to(px, y0); ctx.stroke(); ctx.set_dash([])
+            text(ctx, f"{m3:.2f} m³ pieces", x0 + w, y0 - h + 10, 22, NAVY, fam="Jost Medium", align="right")
+            text(ctx, f"≈ {ratio:.1f}× the cost per m³", x0 + w, y0 - h + 44, 26, C["amber"] if ratio > 2 else C["aqua2"], fam="Jost SemiBold", align="right")
+            text(ctx, "COMPARED WITH 1.0 m³ PIECES", x0 + w, y0 - h + 68, 12, C["grey"], fam="Jost Medium", align="right", tracking=2)
+    reveal_text(ctx, "ILLUSTRATIVE — SMALLER PIECES MEAN FEWER CUBIC METRES PER TURN, SO EACH CUBIC METRE CARRIES MORE OF THE COST", 960, 1010, 14, C["white"], seg(t, 9.0, 9.8), fam="Jost Medium", align="center", tracking=3, alpha=0.85)
+
+# ----------------------------------------------------------------------------- 6. mobilisation (100-120)
+ROAD = [(-40, 640), (260, 600), (560, 700), (900, 620), (1240, 700), (1560, 560), (2140, 470)]
+BLOCKS = [("A", 430, 500, 108), ("B", 900, 480, 70), ("C", 1230, 812, 62), ("D", 1620, 720, 70)]
+
+def s_mob(ctx, t, T):
+    paper_bg(ctx, T, 1.0)
+    # top-down map: blocks and road
+    for k, (name, bx, by, r) in enumerate(BLOCKS):
+        p = seg(t, 0.3 + k * 0.2, 0.9 + k * 0.2)
+        if p <= 0: continue
+        e = ease_out_back(p)
+        ctx.save(); ctx.translate(bx, by); ctx.scale(e, e)
+        ctx.new_path()
+        for i in range(24):
+            a = i / 24 * 2 * math.pi; rr = r * (1 + 0.12 * math.sin(3 * a + k) + 0.06 * math.sin(7 * a))
+            (ctx.move_to if i == 0 else ctx.line_to)(rr * math.cos(a), rr * math.sin(a))
+        ctx.close_path(); stroke_fill(ctx, lerpc(C["lime"], C["green"], 0.3), C["green2"], 2)
+        text(ctx, f"Block {name}", 0, 6, 18, NAVY, fam="Jost SemiBold", align="center")
+        ctx.restore()
+    set_col(ctx, C["taupe"]); ctx.set_line_width(10); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    R.stroke_curve(ctx, ROAD); ctx.stroke()
+    set_col(ctx, C["white"], 0.8); ctx.set_line_width(1.5); ctx.set_dash([12, 10]); R.stroke_curve(ctx, ROAD); ctx.stroke(); ctx.set_dash([])
+    # lowbed travelling along the road between blocks, pausing at each
+    u = 0.12 + 0.88 * ease_in_out(seg(t, 2.0, 16.5))
+    lx, ly = R.catmull(ROAD, u); nx_, ny_ = R.catmull(ROAD, min(1, u + 0.01)); px_, py_ = R.catmull(ROAD, max(0, u - 0.01))
+    ang = math.atan2(ny_ - py_, nx_ - px_)
+    ctx.save(); ctx.translate(lx, ly - 3); ctx.rotate(ang); ctx.scale(0.5, 0.5); ctx.scale(-1, 1); lowbed(ctx, 0, 0, 1.0); ctx.restore()
+    top = min(rotp(lx + dx, ly - 3 + dy, lx, ly - 3, ang)[1] for dx, dy in ((100, -40), (-100, -40), (0, -46)))
+    label_tag(ctx, lx, top - 16, "Lowbed move", seg(t, 2.5, 3.3) * (1 - seg(t, 12.0, 12.8)), C["amber"], "center")
+    # calendar strips
+    cp = seg(t, 4.0, 5.0)
+    if cp > 0:
+        e = ease_out_cubic(cp)
+        set_col(ctx, C["white"], 0.96 * e); rrect(ctx, 90, 120, 1740, 230, 20); ctx.fill()
+        text(ctx, "20 PRODUCING DAYS — TWO WAYS", 120, 160, 15, C["grey"], fam="Jost Medium", tracking=3, alpha=e)
+        rows = [("One large block", [("g", 20), ("m", 2)]), ("Four small blocks", [("g", 5), ("m", 2), ("g", 5), ("m", 2), ("g", 5), ("m", 2), ("g", 5), ("m", 2)])]
+        for r, (name, segs) in enumerate(rows):
+            y = 205 + r * 66
+            text(ctx, name, 120, y + 8, 22, NAVY, fam="Jost Medium", alpha=e)
+            x = 400; day = 0
+            for kind, n in segs:
+                for i in range(n):
+                    p = seg(t, 5.0 + day * 0.12 + r * 0.8, 5.3 + day * 0.12 + r * 0.8); day += 1
+                    if p <= 0: continue
+                    col = C["green"] if kind == "g" else C["amber"]
+                    ctx.save(); ctx.translate(x + 15, y); ctx.scale(ease_out_back(p), ease_out_back(p))
+                    rrect(ctx, -14, -14, 28, 28, 6); set_col(ctx, col); ctx.fill(); ctx.restore()
+                    x += 34
+            moves = sum(n for k, n in segs if k == "m")
+            text(ctx, f"{moves} move days — no logs, costs still running", x + 20, y + 8, 18, C["amber"], fam="Jost Medium", alpha=ease_out_cubic(seg(t, 6.0 + r * 1.2, 6.8 + r * 1.2)))
+    left_panel(ctx, 0)
+    ctx.save(); ctx.set_source(vgrad([(0, hexc("#ffffff", 0)), (1, hexc("#ffffff", 0.95))], 0, 880, 0, 960)); ctx.rectangle(0, 880, W, H - 880); ctx.fill(); ctx.restore()
+    reveal_text(ctx, "Moving costs money.", 120, 978, 66, NAVY, seg(t, 0.3, 1.1), fam="Jost Light")
+    reveal_text(ctx, "A yarder travels by lowbed and a move can take days. Crew wages, equipment payments and insurance", 120, 1018, 23, C["ink"], seg(t, 1.0, 1.8), fam="Jost Light")
+    reveal_text(ctx, "keep running while nothing is produced — and smaller blocks mean more moves.", 120, 1050, 23, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+
+# ----------------------------------------------------------------------------- 7. connectivity (120-142)
+def s_connect(ctx, t, T):
+    paper_bg(ctx, T, 0.7)
+    gc = lambda x: 830 + 0.12 * (x - 900) + 10 * math.sin(x * 0.005)
+    slope = math.atan(0.12)
+    for i in range(7):   # trees behind the ground so the surface occludes their bases
+        tx = 640 + i * 92 + (hsh(i, 9) - 0.5) * 20; conifer(ctx, tx, gc(tx) + 3, 100 + 40 * hsh(i, 10), 1.0, seed=90 + i, sway_t=T, tiers=9, alpha=0.7)
+    terrain(ctx, gc)
+    machines = [(690, 150, lambda: feller_buncher(ctx, 0, 0, 0.7, T * 4)), (905, 120, lambda: skidder(ctx, 0, 0, 0.65, logs=2)), (1110, 235, lambda: yarder(ctx, 0, 0, 0.6))]
+    dash = (1360, 140)
+    for k, (mx, arc_h, draw) in enumerate(machines):
+        my = gc(mx) + 2
+        ctx.save(); ctx.translate(mx, my); ctx.rotate(slope); draw(); ctx.restore()
+        p = seg(t, 1.0 + k * 0.6, 1.8 + k * 0.6)
+        if p <= 0: continue
+        for a in range(3):
+            ap = seg((T * 1.2 + k * 0.3) % 1.0, a * 0.25, a * 0.25 + 0.5)
+            set_col(ctx, C["aqua2"], 0.8 * (1 - ap) * ease_out_cubic(p)); ctx.set_line_width(3)
+            ctx.new_path(); ctx.arc(mx, my - arc_h, 14 + a * 12 + ap * 6, -math.pi * 0.8, -math.pi * 0.2); ctx.stroke()
+        dp = ease_in_out(seg(t, 1.6 + k * 0.6, 2.8 + k * 0.6))
+        ex, ey = mx + (dash[0] - mx) * dp, my - arc_h - 10 + (dash[1] + 260 - (my - arc_h - 10)) * dp
+        cable(ctx, (mx, my - arc_h - 10), (ex, ey), sag=-60 * dp, lw=1.6, col=C["aqua2"], alpha=0.7, dash=([6, 8], -T * 40))
+    # dashboard card
+    dp = seg(t, 2.6, 3.5)
+    if dp > 0:
+        e = ease_out_cubic(dp); x, y = dash[0], dash[1] + (1 - e) * 20
+        glow(ctx, x + 230, y + 230, 380, hexc("#000000"), 0.12 * e)
+        set_col(ctx, C["white"], 0.97 * e); rrect(ctx, x, y, 460, 500, 22); ctx.fill()
+        set_col(ctx, NAVY, e); rrect(ctx, x, y, 460, 54, 22); ctx.fill(); ctx.rectangle(x, y + 30, 460, 24); ctx.fill()
+        text(ctx, "MACHINE CONNECTIVITY  •  LIVE", x + 24, y + 34, 15, C["white"], fam="Jost Medium", tracking=3, alpha=e)
+        ctx.new_path(); ctx.arc(x + 430, y + 27, 6, 0, 2 * math.pi); set_col(ctx, C["lime"], 0.6 + 0.4 * math.sin(T * 5)); ctx.fill()
+        tiles = [("Production today", "m³", 412, 4.0), ("Machine hours", "h", 9.2, 4.4), ("Idle time", "%", 14, 4.8), ("Fuel used", "L", 286, 5.2), ("Turns / hour", "", 11, 5.6), ("Next move", "", None, 6.0)]
+        for i, (lab, unit, val, at) in enumerate(tiles):
+            p = seg(t, at, at + 0.7)
+            if p <= 0: continue
+            r, c = divmod(i, 2); tx, ty = x + 24 + c * 216, y + 80 + r * 138
+            set_col(ctx, C["paper2"], ease_out_cubic(p)); rrect(ctx, tx, ty, 196, 118, 12); ctx.fill()
+            text(ctx, lab.upper(), tx + 16, ty + 30, 12, C["grey"], fam="Jost Medium", tracking=2, alpha=ease_out_cubic(p))
+            if val is None:
+                text(ctx, "Planned", tx + 16, ty + 78, 30, C["green"], fam="Jost SemiBold", alpha=ease_out_cubic(p))
+                text(ctx, "Block C → Block D, Thu", tx + 16, ty + 102, 14, C["ink"], fam="Jost", alpha=ease_out_cubic(p))
+            else:
+                v = val * ease_out_expo(seg(t, at, at + 2.2))
+                s = f"{v:.1f}" if isinstance(val, float) else f"{int(round(v))}"
+                text(ctx, s, tx + 16, ty + 82, 40, NAVY, fam="Jost Medium", alpha=ease_out_cubic(p))
+                text(ctx, unit, tx + 22 + text_width(ctx, s), ty + 82, 18, C["grey"], fam="Jost", alpha=ease_out_cubic(p))
+                # mini sparkline
+                set_col(ctx, C["aqua2"], 0.8 * ease_out_cubic(p)); ctx.set_line_width(2)
+                for j in range(0, 60, 4):
+                    yy = ty + 100 - 8 * math.sin(j * 0.15 + T * 1.3 + i) - 4 * math.sin(j * 0.5 + i)
+                    (ctx.move_to if j == 0 else ctx.line_to)(tx + 120 + j, yy)
+                ctx.stroke()
+    left_panel(ctx, 700, 780)
+    eyebrow(ctx, "Technology", 120, 180, seg(t, 0.2, 0.9))
+    reveal_text(ctx, "Connected machines.", 120, 270, 76, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
+    reveal_text(ctx, "Live data from every machine, shared with the contractor.", 120, 326, 28, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+    bullets(ctx, [("Plan blocks and moves together — fewer move days", 7.0), ("See idle time and fix it: waiting on trucks, on the yarder", 9.0),
+                  ("Match the right machine to the right ground", 11.0), ("Pay contractors on accurate, shared numbers", 13.0),
+                  ("Maintenance alerts before a breakdown stops the crew", 15.0), ("Location and check-ins for lone-worker safety", 17.0)], 120, 400, t, dy=46, size=22)
+
+# ----------------------------------------------------------------------------- 8. outro (142-150)
+def s_outro(ctx, t, T):
+    paper_bg(ctx, T, 1.0, reveal=seg(t, 0.0, 1.6))
+    reveal_text(ctx, "Better data. Better decisions.", 960, 380, 64, NAVY, seg(t, 0.3, 1.2), fam="Jost Light", align="center")
+    reveal_text(ctx, "Stronger contractors.", 960, 460, 64, NAVY, seg(t, 0.6, 1.5), fam="Jost SemiBold", align="center")
+    wordmark(ctx, 960, 660, 120, seg(t, 1.4, 2.6), ring_p=seg(t, 1.8, 3.0))
+    reveal_text(ctx, "mosaicforests.com", 960, 790, 26, C["aqua2"], seg(t, 3.0, 3.8), fam="Jost Medium", align="center", tracking=3)
+    fo = seg(T, R.DUR - 1.2, R.DUR - 0.2)
+    if fo > 0: set_col(ctx, C["white"], ease_in_out(fo)); ctx.paint()
+
+# ============================================================================= timeline
+SCENES = [
+    (0.0, 11.0, s_title, 1.0),
+    (11.0, 33.0, s_ground, 1.0),
+    (33.0, 58.0, s_cable, 1.0),
+    (58.0, 86.0, s_tether, 1.0),
+    (86.0, 111.0, s_piece, 1.0),
+    (111.0, 131.0, s_mob, 1.0),
+    (131.0, 153.0, s_connect, 1.0),
+    (153.0, 161.0, s_outro, 1.0),
+]
+DUR = 161.0
+
+def install():
+    R.SCENES = SCENES; R.DUR = DUR; R.NFRAMES = int(DUR * R.FPS); R.TRANS = 1.8
+
+install()
+
+if __name__ == "__main__":
+    import sys
+    if "--out" not in sys.argv and "--stills" not in sys.argv:
+        sys.argv += ["--out", os.path.join(R.OUT, "harvest_video.mp4")]
+    R.main()
