@@ -128,10 +128,43 @@ def jobbank(hours, log):
     return out
 
 
+FLAG_RE = re.compile(r"\b(fully remote|remote-?first|100% remote|remote work|work remotely|remote \((?:[A-Za-z, ]{1,30})\)|"
+                     r"remote position|remote role|remote opportunity|work from home|anywhere in canada|"
+                     r"hybrid|on-site|onsite|in-office|in office|temporary|contract|maternity)\b", re.I)
+SALARY_RE = re.compile(r"\$\s?\d{2,3},?\d{3}(?:\s?(?:-|to|\u2013)\s?\$?\s?\d{2,3},?\d{3})?", re.I)
+
+
+def enrich_linkedin(jobs, limit, log):
+    """Fetch each LinkedIn posting via the guest API and add remote/hybrid/salary flags."""
+    n = 0
+    for j in jobs:
+        if j["source"] != "linkedin" or n >= limit:
+            continue
+        m = re.search(r"-(\d{6,})$", j["url"])
+        if not m:
+            continue
+        n += 1
+        try:
+            body = get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{m.group(1)}")
+        except Exception as e:
+            log.append(f"detail[{m.group(1)}]: {e}")
+            continue
+        desc = re.search(r'class="show-more-less-html__markup[^"]*"[^>]*>(.*?)</div>', body, re.S)
+        text = clean(desc.group(1)) if desc else ""
+        flags = sorted({f.lower() for f in FLAG_RE.findall(text)})
+        sal = SALARY_RE.findall(text)
+        j["flags"] = ", ".join(flags)
+        j["salary"] = " / ".join(dict.fromkeys(sal)) if sal else ""
+        j["cpa"] = "CPA required" if re.search(r"CPA (designation|designated)? ?(is )?(required|mandatory)|must (be|have|hold) (a )?CPA", text, re.I) \
+            else ("CPA mentioned" if "CPA" in text else "")
+        time.sleep(0.7)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=48)
     ap.add_argument("--json")
+    ap.add_argument("--details", type=int, default=60, help="fetch flags/salary for up to N LinkedIn rows (0 = skip)")
     a = ap.parse_args()
     log, jobs = [], []
     for fn in (linkedin, cpa_ontario, jobbank):
@@ -151,12 +184,16 @@ def main():
             continue
         seen.add(key)
         uniq.append(j)
+    if a.details:
+        enrich_linkedin(uniq, a.details, log)
     if a.json:
         with open(a.json, "w") as f:
             json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(), "jobs": uniq, "errors": log}, f, indent=1)
     print(f"# {len(uniq)} postings (last {a.hours}h), {len(jobs)-len(uniq)} dupes/excluded dropped\n")
     for j in uniq:
-        print(f"- [{j['source']}] {j['title']} — {j['company']} — {j['location']} — {j['posted']}\n  {j['url']}")
+        extra = " | ".join(x for x in (j.get("flags"), j.get("salary"), j.get("cpa")) if x)
+        print(f"- [{j['source']}] {j['title']} — {j['company']} — {j['location']} — {j['posted'][:10]}"
+              + (f"\n  {extra}" if extra else "") + f"\n  {j['url']}")
     if log:
         print("\n# errors\n" + "\n".join(log), file=sys.stderr)
 
