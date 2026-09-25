@@ -727,13 +727,14 @@ def s_piece(ctx, t, T):
         set_col(ctx, C["white"], 0.96 * e); rrect(ctx, x - 170, y - 40, 340, 400, 20); ctx.fill()
         text(ctx, title, x, y, 26, NAVY, fam="Jost Medium", align="center", alpha=e)
         cable(ctx, (x - 170, y + 40), (x + 170, y + 40), sag=6, lw=2, alpha=e)
-        carriage(ctx, x, y + 44, 0.9, 40)
+        carriage(ctx, x, y + 44, 0.9, 104)
+        set_col(ctx, NAVY, e); ctx.set_line_width(2); ctx.new_path(); ctx.arc(x, y + 44 + 12.6 + 104 + 5, 5, 0, 2 * math.pi); ctx.stroke()   # choker ring
         for i, (L, d) in enumerate(logs):
             lp = seg(t, 3.0 + k * 1.2 + i * 0.12, 3.5 + k * 1.2 + i * 0.12)
             if lp <= 0: continue
             ang = 1.15; ox = (i - (len(logs) - 1) / 2) * (d + 6); oy = 100 + 90
             log(ctx, x + ox * 0.5, y + oy + (1 - ease_out_cubic(lp)) * -30, L, d, ang, ease_out_cubic(lp))
-        text(ctx, vol, x, y + 330, 22, C["aqua2"], fam="Jost SemiBold", align="center", alpha=e)
+        text(ctx, vol, x, y + 330, 22, C["aqua2"], fam="Jost SemiBold", align="center", alpha=e * ease_out_cubic(seg(t, 3.5 + k * 1.2 + len(logs) * 0.12, 4.0 + k * 1.2 + len(logs) * 0.12)))
         ctx.restore()
     # right: cost curve. cost per m3 ∝ 1 / (m3 per turn)
     cp = seg(t, 5.0, 6.0)
@@ -742,7 +743,7 @@ def s_piece(ctx, t, T):
         set_col(ctx, C["white"], 0.96 * e); rrect(ctx, x0 - 70, y0 - h - 110, w + 130, h + 190, 20); ctx.fill()
         text(ctx, "COST PER CUBIC METRE  vs  PIECE SIZE", x0, y0 - h - 60, 15, C["grey"], fam="Jost Medium", tracking=3, alpha=e)
         set_col(ctx, C["mute"], e); ctx.set_line_width(1.5); ctx.move_to(x0, y0 - h); ctx.line_to(x0, y0); ctx.line_to(x0 + w, y0); ctx.stroke()
-        text(ctx, "piece size (m³)  →", x0 + w, y0 + 34, 15, C["grey"], fam="Jost Medium", align="right", alpha=e)
+        text(ctx, "piece size (m³)  →", x0 + w / 2, y0 + 58, 15, C["grey"], fam="Jost Medium", align="center", alpha=e)
         ctx.save(); ctx.translate(x0 - 22, y0 - h / 2); ctx.rotate(-math.pi / 2); text(ctx, "cost / m³  →", 0, 0, 15, C["grey"], fam="Jost Medium", align="center", alpha=e); ctx.restore()
         def curve(u):   # u: 0 (0.1 m3) .. 1 (1.2 m3)
             m3 = 0.1 + 1.1 * u; c = 1 / m3 / (1 / 0.1)   # normalised
@@ -756,19 +757,20 @@ def s_piece(ctx, t, T):
         for u, lab in ((0.82, "1.0"), (0.36, "0.5"), (0.14, "0.25")):
             px, _ = curve(u); text(ctx, lab, px, y0 + 24, 14, C["grey"], fam="Jost", align="center", alpha=e)
         # slider marker sweeping from large to small
-        mu = 1 - 0.85 * ease_in_out(seg(t, 8.5, 16.0))
+        mu = 0.818 - 0.67 * ease_in_out(seg(t, 8.5, 16.0))
         if t > 8.0:
-            px, py = curve(mu); m3 = 0.1 + 1.1 * mu; ratio = (1.2 / m3)
+            px, py = curve(mu); m3 = 0.1 + 1.1 * mu; ratio = (1.0 / m3)
             set_col(ctx, C["aqua2"], 0.25); ctx.new_path(); ctx.arc(px, py, 22, 0, 2 * math.pi); ctx.fill()
             set_col(ctx, NAVY); ctx.new_path(); ctx.arc(px, py, 8, 0, 2 * math.pi); ctx.fill()
             set_col(ctx, C["mute"], 0.7); ctx.set_line_width(1); ctx.set_dash([4, 4]); ctx.move_to(px, py); ctx.line_to(px, y0); ctx.stroke(); ctx.set_dash([])
             text(ctx, f"{m3:.2f} m³ pieces", x0 + w, y0 - h + 10, 22, NAVY, fam="Jost Medium", align="right")
             text(ctx, f"≈ {ratio:.1f}× the cost per m³", x0 + w, y0 - h + 44, 26, C["amber"] if ratio > 2 else C["aqua2"], fam="Jost SemiBold", align="right")
+            text(ctx, "COMPARED WITH 1.0 m³ PIECES", x0 + w, y0 - h + 68, 12, C["grey"], fam="Jost Medium", align="right", tracking=2)
     reveal_text(ctx, "ILLUSTRATIVE — SMALLER PIECES MEAN FEWER CUBIC METRES PER TURN, SO EACH CUBIC METRE CARRIES MORE OF THE COST", 960, 1010, 14, C["white"], seg(t, 9.0, 9.8), fam="Jost Medium", align="center", tracking=3, alpha=0.85)
 
 # ----------------------------------------------------------------------------- 6. mobilisation (100-120)
-ROAD = [(-40, 640), (260, 600), (560, 700), (900, 620), (1240, 700), (1560, 560), (1960, 500)]
-BLOCKS = [("A", 420, 470, 120), ("B", 900, 480, 70), ("C", 1230, 850, 70), ("D", 1620, 720, 70)]
+ROAD = [(-40, 640), (260, 600), (560, 700), (900, 620), (1240, 700), (1560, 560), (2140, 470)]
+BLOCKS = [("A", 430, 500, 108), ("B", 900, 480, 70), ("C", 1230, 812, 62), ("D", 1620, 720, 70)]
 
 def s_mob(ctx, t, T):
     paper_bg(ctx, T, 1.0)
@@ -789,11 +791,12 @@ def s_mob(ctx, t, T):
     R.stroke_curve(ctx, ROAD); ctx.stroke()
     set_col(ctx, C["white"], 0.8); ctx.set_line_width(1.5); ctx.set_dash([12, 10]); R.stroke_curve(ctx, ROAD); ctx.stroke(); ctx.set_dash([])
     # lowbed travelling along the road between blocks, pausing at each
-    u = 0.12 + 0.78 * ease_in_out(seg(t, 2.0, 12.0))
-    lx, ly = R.catmull(ROAD, u); nx_, ny_ = R.catmull(ROAD, min(1, u + 0.01))
-    ang = math.atan2(ny_ - ly, nx_ - lx)
-    ctx.save(); ctx.translate(lx, ly - 10); ctx.rotate(ang); ctx.scale(0.5, 0.5); ctx.scale(-1, 1); lowbed(ctx, 0, 0, 1.0); ctx.restore()
-    label_tag(ctx, lx, ly - 60, "Lowbed move", seg(t, 2.5, 3.3), C["amber"], "center")
+    u = 0.12 + 0.88 * ease_in_out(seg(t, 2.0, 16.5))
+    lx, ly = R.catmull(ROAD, u); nx_, ny_ = R.catmull(ROAD, min(1, u + 0.01)); px_, py_ = R.catmull(ROAD, max(0, u - 0.01))
+    ang = math.atan2(ny_ - py_, nx_ - px_)
+    ctx.save(); ctx.translate(lx, ly - 3); ctx.rotate(ang); ctx.scale(0.5, 0.5); ctx.scale(-1, 1); lowbed(ctx, 0, 0, 1.0); ctx.restore()
+    top = min(rotp(lx + dx, ly - 3 + dy, lx, ly - 3, ang)[1] for dx, dy in ((100, -40), (-100, -40), (0, -46)))
+    label_tag(ctx, lx, top - 16, "Lowbed move", seg(t, 2.5, 3.3) * (1 - seg(t, 12.0, 12.8)), C["amber"], "center")
     # calendar strips
     cp = seg(t, 4.0, 5.0)
     if cp > 0:
@@ -816,10 +819,10 @@ def s_mob(ctx, t, T):
             moves = sum(n for k, n in segs if k == "m")
             text(ctx, f"{moves} move days — no logs, costs still running", x + 20, y + 8, 18, C["amber"], fam="Jost Medium", alpha=ease_out_cubic(seg(t, 6.0 + r * 1.2, 6.8 + r * 1.2)))
     left_panel(ctx, 0)
-    ctx.save(); ctx.set_source(vgrad([(0, hexc("#ffffff", 0)), (1, hexc("#ffffff", 0.95))], 0, 760, 0, 900)); ctx.rectangle(0, 760, W, H - 760); ctx.fill(); ctx.restore()
-    reveal_text(ctx, "Moving costs money.", 120, 960, 72, NAVY, seg(t, 0.3, 1.1), fam="Jost Light")
-    reveal_text(ctx, "A yarder travels by lowbed and a move can take days. Crew wages, equipment payments and insurance", 120, 1005, 24, C["ink"], seg(t, 1.0, 1.8), fam="Jost Light")
-    reveal_text(ctx, "keep running while nothing is produced — and smaller blocks mean more moves.", 120, 1040, 24, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
+    ctx.save(); ctx.set_source(vgrad([(0, hexc("#ffffff", 0)), (1, hexc("#ffffff", 0.95))], 0, 880, 0, 960)); ctx.rectangle(0, 880, W, H - 880); ctx.fill(); ctx.restore()
+    reveal_text(ctx, "Moving costs money.", 120, 978, 66, NAVY, seg(t, 0.3, 1.1), fam="Jost Light")
+    reveal_text(ctx, "A yarder travels by lowbed and a move can take days. Crew wages, equipment payments and insurance", 120, 1018, 23, C["ink"], seg(t, 1.0, 1.8), fam="Jost Light")
+    reveal_text(ctx, "keep running while nothing is produced — and smaller blocks mean more moves.", 120, 1050, 23, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
 
 # ----------------------------------------------------------------------------- 7. connectivity (120-142)
 def s_connect(ctx, t, T):
