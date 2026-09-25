@@ -45,3 +45,27 @@ ffmpeg -i out/video.mp4 -i out/mix.wav -c:v copy -c:a aac -b:a 192k -shortest ou
 
 `python render.py --stills 150 400 780` dumps PNG frames for quick checks;
 `--scale 0.5` renders a fast low-res preview.
+
+## Video 2 — "Stump to road" (educational explainer, 2:33)
+
+Same brand system, built for someone who has never seen a logging show. Animated
+side-view machinery drawn in cairo: feller-buncher, skidder, processor, log truck,
+tower yarder with skyline + carriage, winch-assist anchor and tethered harvester, lowbed.
+
+| Time | Scene | What it shows |
+|---|---|---|
+| 0–11s | Title | "Stump to road." with the three system glyphs |
+| 11–33s | Ground-based | Gentle slope: feller-buncher fells and bunches, skidder shuttles bunches to the landing, processor bucks, loader fills the truck |
+| 33–58s | Cable yarding | Steep slope: yarder on the road, skyline to a tailhold, carriage cycles turns uphill, rigging crew at the tail |
+| 58–78s | Tethered | Anchor machine + winch on the road, harvester working down the face on the tether |
+| 78–103s | Piece size | Same turn with 3 big vs 8 small logs; live cost-per-m³ curve as piece size shrinks (illustrative) |
+| 103–123s | Mobilisation | Map with a lowbed moving between blocks; calendar strip of producing vs move days, one big block vs four small |
+| 123–145s | Connectivity | Machines with signal arcs feeding a live dashboard; what the data lets us do |
+| 145–153s | Outro | "Better data. Better decisions. Stronger contractors." |
+
+```bash
+python render_harvest.py      # -> out/harvest_video.mp4 (reuses render.py's engine)
+python audio_harvest.py       # -> out/harvest_audio.wav
+python voiceover_harvest.py   # -> out/harvest_voice.wav, out/harvest_mix.wav
+ffmpeg -i out/harvest_video.mp4 -i out/harvest_mix.wav -c:v copy -c:a aac -b:a 192k -shortest out/harvest_final.mp4
+```
