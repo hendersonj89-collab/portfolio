@@ -30,9 +30,9 @@ CUES = [
     (25.0, "In the Coke-sigh-la Watershed, we're piloting a new approach: longer growth periods, harvest designs that protect water, "
            "stronger stream protection and smaller road footprints, with seven hundred and fifteen hectares of older forest set aside."),
     (43.2, "It's why we're called Mosaic. Small patches on their own clocks, so the forest is never all one age, and never all one use."),
-    (56.2, "And B.C. mills come first. Every log is offered to domestic manufacturers before export. "
+    (56.2, "And BC mills come first. Every log is offered to domestic manufacturers before export. "
            "Over sixty mills rely on Mosaic. Thirty of them, here on Vancouver Island."),
-    (71.2, "Keeping fibre flowing to B.C. mills, forestry workers and contractors busy, and coastal communities strong."),
+    (71.2, "Keeping fibre flowing to BC mills, forestry workers and contractors busy, and coastal communities strong."),
     (81.8, "Mosaic Forest Management. Innovation and stewardship meet here."),
 ]
 SCENE_ENDS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0, 90.0]

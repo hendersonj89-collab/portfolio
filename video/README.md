@@ -9,7 +9,7 @@ white/taupe palette, topographic contour lines, Jost type, the gradient-ring "O"
 |---|---|
 | Output | `out/final.mp4` — 90 s, 1920×1080, 30 fps, H.264 + AAC (`final_web.mp4` is a smaller encode) |
 | Visuals | `render.py` — cairo vector rendering, contourpy contour lines, 4-process parallel encode via ffmpeg |
-| Audio | `audio.py` — felt-piano ostinato, strings, bass, soft percussion, written lead, whooshes on the cuts (G major, 96 BPM) |
+| Audio | `audio.py` — cinematic ambient: string ensemble, sub drone, marimba motif, soft pulse, taiko, shimmer, cello line, whooshes on the cuts (F major, 72 BPM) |
 | Voice | `voiceover.py` — Kokoro neural TTS (offline ONNX), one cue per scene, music ducked under the voice |
 | Fonts | Jost + Inter (`fonts/ttf`, OFL) |
 

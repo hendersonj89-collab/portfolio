@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Procedural soundtrack, track B: felt-piano ostinato + strings, G major, 96 BPM,
-building with bass and soft percussion, a written lead line, transition whooshes
-timed to the scene cuts in render.py. Everything synthesised with numpy/scipy.
+Procedural soundtrack, track C: cinematic ambient. Warm string ensemble on slow
+chords, sub drone, sparse marimba motif, soft pulse, low taiko hits and a shimmer
+layer that build across the 90 s cut, leaving room for the voice-over.
+F major, 72 BPM. Everything synthesised with numpy/scipy.
 
     python audio.py   -> out/audio.wav (48 kHz stereo)
 """
@@ -16,14 +17,14 @@ from scipy.io import wavfile
 SR = 48000
 DUR = 90.0
 N = int(SR * DUR)
-BPM = 96.0
-BEAT = 60.0 / BPM            # 0.625 s
-BAR = 4 * BEAT               # 2.5 s
+BPM = 72.0
+BEAT = 60.0 / BPM            # 0.8333 s
+BAR = 4 * BEAT               # 3.333 s
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 CUTS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0]   # must match SCENES in render.py
 
-rng = np.random.default_rng(7)
+rng = np.random.default_rng(3)
 
 def hz(m): return 440.0 * 2 ** ((m - 69) / 12)
 
@@ -36,91 +37,88 @@ class Bus:
         self.L[i0:i0 + len(sig)] += sig * gain * math.cos(a)
         self.R[i0:i0 + len(sig)] += sig * gain * math.sin(a)
 
-def lowpass(x, fc, order=4):
-    return signal.sosfilt(signal.butter(order, fc / (SR / 2), "low", output="sos"), x)
-
-def highpass(x, fc, order=2):
-    return signal.sosfilt(signal.butter(order, fc / (SR / 2), "high", output="sos"), x)
-
-def bandpass(x, f0, f1, order=4):
-    return signal.sosfilt(signal.butter(order, [f0 / (SR / 2), f1 / (SR / 2)], "band", output="sos"), x)
+def lowpass(x, fc, order=4): return signal.sosfilt(signal.butter(order, fc / (SR / 2), "low", output="sos"), x)
+def highpass(x, fc, order=2): return signal.sosfilt(signal.butter(order, fc / (SR / 2), "high", output="sos"), x)
+def bandpass(x, f0, f1, order=4): return signal.sosfilt(signal.butter(order, [f0 / (SR / 2), f1 / (SR / 2)], "band", output="sos"), x)
 
 def env_adsr(n, a, d, s, r):
     e = np.ones(n); ai, di, ri = int(a * SR), int(d * SR), int(r * SR)
-    if ai: e[:ai] = np.linspace(0, 1, ai)
+    if ai: e[:ai] = np.linspace(0, 1, ai) ** 1.5
     if di: e[ai:ai + di] = np.linspace(1, s, min(di, max(0, n - ai)))
     e[ai + di:] = s
-    if ri and n > ri: e[-ri:] *= np.linspace(1, 0, ri)
+    if ri and n > ri: e[-ri:] *= np.linspace(1, 0, ri) ** 1.5
     return e
 
-# ----------------------------------------------------------------------------- harmony: G  Em  C  D  (5 s per chord)
-PROG = [("G", 55, 4), ("Em", 52, 3), ("C", 48, 4), ("D", 50, 4)] * 4 + [("G", 55, 4), ("G", 55, 4)]
-CHORD_LEN = 2 * BAR
+# ----------------------------------------------------------------------------- harmony: Fmaj7  Am7  Dm7  Bbmaj7   (7.5 s each)
+# (name, chord tones as midi)
+PROG = [("Fmaj7", [53, 57, 60, 64]), ("Am7", [57, 60, 64, 67]), ("Dm7", [50, 57, 60, 65]), ("Bbmaj7", [46, 53, 57, 62])] * 3
+CHORD_LEN = 7.5
 
 def chord_at(t): return PROG[min(int(t / CHORD_LEN), len(PROG) - 1)]
 
 # ----------------------------------------------------------------------------- instruments
-def piano(f, dur=2.2, vel=0.8):
-    """felt piano: inharmonic partials, per-partial decay, soft hammer noise"""
-    n = int(dur * SR); t = np.arange(n) / SR
-    out = np.zeros(n); B = 0.00025
-    for k in range(1, 9):
-        fk = f * k * math.sqrt(1 + B * k * k)
-        if fk > 18000: break
-        amp = (1 / k ** (1.15 + (1 - vel) * 0.8))
-        dec = (0.9 + 0.0009 * f) * (1 + 0.55 * (k - 1))
-        out += amp * np.sin(2 * np.pi * fk * t + rng.uniform(0, 6)) * np.exp(-dec * t)
-    out *= 1 - np.exp(-t * 2500)
-    hammer = lowpass(rng.standard_normal(int(0.012 * SR)), 2500) * np.linspace(1, 0, int(0.012 * SR)) * 0.5 * vel
-    out[: len(hammer)] += hammer
-    out = lowpass(out, 3200 + 5000 * vel)
-    return out / 2.2 * vel
-
-def strings(f, dur):
+def strings(f, dur, voices=5, bright=1.0):
     n = int(dur * SR); t = np.arange(n) / SR
     out = np.zeros(n)
-    vib = 1 + 0.003 * np.sin(2 * np.pi * 4.6 * t + rng.uniform(0, 6)) * np.clip(t / 1.5, 0, 1)
-    for dt in (-0.006, 0, 0.006):
+    for v in range(voices):
+        dt = (v - (voices - 1) / 2) * 0.0045
+        vib = 1 + 0.0035 * np.sin(2 * np.pi * (4.2 + 0.4 * v) * t + rng.uniform(0, 6)) * np.clip(t / 2.0, 0, 1)
         ph = 2 * np.pi * np.cumsum(f * (1 + dt) * vib) / SR
-        for h in range(1, 11): out += np.sin(h * ph + rng.uniform(0, 6)) / h
-    out = lowpass(out, 2200); out = highpass(out, 160)
-    return out / 8 * env_adsr(n, 1.2, 0, 1, 1.4)
+        for h in range(1, 12): out += np.sin(h * ph + rng.uniform(0, 6)) / h ** 1.1
+    out = lowpass(out, 1800 * bright); out = highpass(out, 120)
+    out *= 0.5 / (np.max(np.abs(out)) + 1e-9)
+    return out * env_adsr(n, 2.2, 0, 1, 2.6)
 
-def lead(f, dur):
+def marimba(f, dur=1.2, vel=0.7):
     n = int(dur * SR); t = np.arange(n) / SR
-    vib = 1 + 0.007 * np.sin(2 * np.pi * 5.0 * t) * np.clip((t - 0.2) / 0.5, 0, 1)
+    out = np.sin(2 * np.pi * f * t) * np.exp(-t * 5) + 0.35 * np.sin(2 * np.pi * f * 4 * t) * np.exp(-t * 14) + 0.12 * np.sin(2 * np.pi * f * 9.2 * t) * np.exp(-t * 30)
+    out *= 1 - np.exp(-t * 3000)
+    return out / 1.4 * vel
+
+def shimmer(f, dur):
+    n = int(dur * SR); t = np.arange(n) / SR
+    trem = 0.6 + 0.4 * np.sin(2 * np.pi * 5.5 * t + rng.uniform(0, 6))
+    ph = 2 * np.pi * np.cumsum(f * (1 + 0.002 * np.sin(2 * np.pi * 0.3 * t))) / SR
+    out = (np.sin(ph) + 0.5 * np.sin(2 * ph + 1) + 0.25 * np.sin(3 * ph + 2)) * trem
+    return highpass(out, 800) / 1.7 * env_adsr(n, 3.0, 0, 1, 3.0)
+
+def sub(f, dur):
+    n = int(dur * SR); t = np.arange(n) / SR
+    return (np.sin(2 * np.pi * f * t) + 0.15 * np.sin(2 * np.pi * f * 2 * t)) * env_adsr(n, 1.5, 0, 1, 2.0)
+
+def taiko(big=1.0):
+    n = int(0.9 * SR); t = np.arange(n) / SR
+    f = 52 + 80 * np.exp(-t * 14)
+    tone = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 4.5)
+    skin = lowpass(rng.standard_normal(n), 900) * np.exp(-t * 28) * 0.6
+    return (tone + skin) * big
+
+def pulse():
+    n = int(0.25 * SR); t = np.arange(n) / SR
+    return lowpass(bandpass(rng.standard_normal(n), 200, 1200), 1400) * np.exp(-t * 26)
+
+def cello(f, dur):
+    n = int(dur * SR); t = np.arange(n) / SR
+    vib = 1 + 0.006 * np.sin(2 * np.pi * 5.0 * t) * np.clip((t - 0.3) / 0.6, 0, 1)
     ph = 2 * np.pi * np.cumsum(f * vib) / SR
-    out = np.sin(ph) + 0.45 * np.sin(2 * ph) + 0.18 * np.sin(3 * ph) + 0.08 * np.sin(4 * ph)
-    out = lowpass(out, 3500)
-    return out / 1.6 * env_adsr(n, 0.08, 0.25, 0.75, 0.3)
+    out = np.zeros(n)
+    for h in range(1, 14): out += np.sin(h * ph + rng.uniform(0, 6)) / h
+    out = lowpass(out, 1400)
+    return out / 4 * env_adsr(n, 0.35, 0.2, 0.85, 0.5)
 
-def kick(soft=1.0):
-    n = int(0.35 * SR); t = np.arange(n) / SR
-    f = 48 + 90 * np.exp(-t * 22)
-    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 11) * soft
-
-def shaker(accent=0.0):
-    n = int(0.06 * SR); t = np.arange(n) / SR
-    return highpass(rng.standard_normal(n), 5000) * np.exp(-t * (70 - 25 * accent)) * (0.5 + 0.5 * accent)
-
-def snare():
-    n = int(0.22 * SR); t = np.arange(n) / SR
-    body = np.sin(2 * np.pi * 185 * t) * np.exp(-t * 30)
-    return (bandpass(rng.standard_normal(n), 900, 5000) * np.exp(-t * 20) * 0.8 + body * 0.6)
-
-def whoosh(dur=1.6):
+def whoosh(dur=1.7):
     n = int(dur * SR); t = np.arange(n) / SR
     up = (t / (dur * 0.72)) ** 2.4
     env = np.where(t < dur * 0.72, up, np.exp(-(t - dur * 0.72) * 9))
-    x = bandpass(rng.standard_normal(n), 300, 5000); xb = bandpass(rng.standard_normal(n), 2000, 12000)
+    x = bandpass(rng.standard_normal(n), 250, 4000); xb = bandpass(rng.standard_normal(n), 1500, 9000)
     return (x * (1 - up * 0.6) + xb * up * 0.6) * env
 
-def boom(dur=1.4, f0=55):
+def boom(dur=1.6, f0=50):
     n = int(dur * SR); t = np.arange(n) / SR
-    f = f0 * (1 + 0.7 * np.exp(-t * 9))
-    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 2.8)
+    f = f0 * (1 + 0.7 * np.exp(-t * 8))
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 2.4)
 
-def reverb(x, t60=2.2, wet=0.28, damp=4000):
+def reverb(x, t60=3.2, wet=0.35, damp=3500):
     n = int(t60 * SR); t = np.arange(n) / SR
     ir = rng.standard_normal(n) * np.exp(-6.9 * t / t60); ir = lowpass(ir, damp); ir /= np.sqrt(np.sum(ir ** 2))
     return x + wet * signal.fftconvolve(x, ir)[: len(x)]
@@ -128,71 +126,61 @@ def reverb(x, t60=2.2, wet=0.28, damp=4000):
 # ----------------------------------------------------------------------------- arrangement
 music = Bus(); fx = Bus(); amb = Bus()
 
-print("piano")
+print("strings + sub")
+for ci, (name, tones) in enumerate(PROG):
+    t0 = ci * CHORD_LEN; dur = CHORD_LEN + 2.8
+    level = 0.7 if t0 < 10 else 0.8 if t0 < 24 else 0.9 if t0 < 42 else 1.0
+    if t0 >= 80: level = 0.7
+    bright = 0.8 if t0 < 24 else 1.0 if t0 < 55 else 1.15
+    for k, m in enumerate(tones):
+        music.add(strings(hz(m + 12), dur, bright=bright), t0, pan=(k - 1.5) * 0.45, gain=0.13 * level)
+    if t0 >= 10: music.add(strings(hz(tones[0]), dur, voices=3, bright=0.7), t0, pan=0, gain=0.11 * level)   # low octave
+    if t0 >= 24: music.add(sub(hz(tones[0] - 12), dur), t0, gain=0.11 * level)
+    if t0 >= 55 and t0 < 80:
+        for k, m in enumerate(tones[1:3]): music.add(shimmer(hz(m + 24), dur), t0, pan=(k - 0.5) * 0.8, gain=0.02)
+
+print("marimba motif")
 E = BEAT / 2
+motif = [0, 2, 1, 3, 2, 3, 1, 2]   # indices into chord tones, rising then falling
 for i in range(int(DUR / E)):
     t = i * E
-    name, root, third = chord_at(t)
-    pat = [0, 7, 12, 12 + third, 19, 12 + third, 12, 7]
+    if t < 10 or t >= 80: continue
+    name, tones = chord_at(t)
     k = i % 8
-    m = root + pat[k] + (12 if (i // 16) % 4 == 3 and k in (2, 6) else 0)
-    # intro: sparse (every other), full ostinato from the first cut
-    if t < 10 and k % 2 == 1: continue
-    if t >= 80 and k not in (0, 2, 4): continue
-    vel = 0.85 if k == 0 else 0.55 + 0.2 * (k % 2 == 0) + 0.06 * rng.random()
-    if t < 10: vel *= 0.8
-    music.add(piano(hz(m), 2.4, vel), t + rng.uniform(-0.004, 0.004), pan=(m - 67) / 30, gain=0.34)
-# left hand: bass octave on beat 1, fifth on beat 3
-for bar in range(int(DUR / BAR)):
-    t = bar * BAR; name, root, third = chord_at(t)
-    music.add(piano(hz(root - 12), 3.0, 0.75), t, pan=-0.25, gain=0.30)
-    if t >= 10: music.add(piano(hz(root - 5), 2.4, 0.55), t + 2 * BEAT, pan=-0.2, gain=0.22)
+    if t < 24 and k % 2 == 1: continue            # sparse at first
+    if t < 42 and k in (5, 7): continue
+    m = tones[motif[k]] + 24
+    vel = 0.8 if k == 0 else 0.45 + 0.25 * rng.random()
+    music.add(marimba(hz(m), 1.2, vel), t + rng.uniform(-0.006, 0.006), pan=(m - 78) / 24, gain=0.16)
 
-print("strings")
-for ci, (name, root, third) in enumerate(PROG):
-    t0 = ci * CHORD_LEN
-    if t0 + CHORD_LEN <= 10: continue
-    dur = CHORD_LEN + 1.6
-    swell = 0.55 if t0 < 24 else 0.8 if t0 < 42 else 1.0
-    for k, iv in enumerate([12, 12 + third, 19, 24]):
-        music.add(strings(hz(root + iv), dur), t0, pan=(k - 1.5) * 0.4, gain=0.045 * swell)
-
-print("bass")
-for bar in range(int(DUR / BAR)):
-    t = bar * BAR
-    if t < 24 or t >= 80: continue
-    name, root, third = chord_at(t)
-    for beat, iv, g in ((0, 0, 1.0), (2, 0, 0.8), (3.5, 7, 0.55)):
-        n = int(1.2 * BEAT * SR); tt = np.arange(n) / SR; f = hz(root - 24)
-        b = (np.sin(2 * np.pi * f * hz(iv + 69) / 440 * tt) + 0.25 * np.sin(4 * np.pi * f * hz(iv + 69) / 440 * tt)) * env_adsr(n, 0.015, 0.25, 0.6, 0.25)
-        music.add(lowpass(b, 300), t + beat * BEAT, gain=0.42 * g)
-
-print("percussion")
+print("pulse + taiko")
 for beat in range(int(DUR / BEAT)):
     t = beat * BEAT
-    if t < 42 or t >= 80: continue
-    build = 0.75 if t < 55 else 1.0
-    music.add(kick(build), t, gain=0.55)
-    if t >= 55 and beat % 2 == 1: music.add(snare(), t, gain=0.16)
-    for s in range(4):
-        music.add(shaker(accent=1.0 if s == 2 else 0.2), t + s * BEAT / 4, pan=0.35, gain=0.05 * build)
+    if 24 <= t < 80:
+        for s in (0, 0.5):
+            music.add(pulse(), t + s * BEAT, pan=0.2 if s else -0.2, gain=0.09 * (0.6 if t < 42 else 1.0) * (1.0 if s == 0 else 0.55))
+    if 42 <= t < 80 and beat % 4 == 0:
+        music.add(taiko(1.0 if t >= 55 else 0.7), t, gain=0.42)
+    if 55 <= t < 80 and beat % 4 == 2:
+        music.add(taiko(0.5), t, gain=0.3)
+# rolls into the later cuts
+for c in (55.0, 70.0, 80.0):
+    for k in range(8):
+        tt = c - 1.6 + k * 0.2
+        music.add(taiko(0.35 + 0.08 * k), tt, gain=0.25)
 
-print("lead")
-MELODY = [(0, 2, 79), (2, 1, 81), (3, 1, 83), (4, 3, 86), (8, 2, 83), (10, 1, 81), (11, 1, 79), (12, 3, 81),
-          (16, 2, 79), (18, 1, 76), (19, 1, 79), (20, 3, 83), (24, 2, 81), (26, 1, 79), (27, 1, 78), (28, 4, 79),
-          (32, 2, 83), (34, 1, 86), (35, 1, 83), (36, 3, 81), (40, 1.5, 79), (41.5, 1.5, 81), (43, 2, 83), (45, 3, 86),
-          (48, 2, 84), (50, 1, 83), (51, 1, 81), (52, 3, 79), (56, 2, 78), (58, 1, 76), (59, 1, 78), (60, 5, 79)]
-LEAD_START = 55.0 / BEAT   # lead enters on the mills scene
-for (b, ln, m) in MELODY:
-    music.add(lead(hz(m), ln * BEAT), (LEAD_START + b) * BEAT, pan=0.15, gain=0.16)
+print("cello line")
+CELLO = [(0, 3, 65), (3, 1, 64), (4, 4, 60), (8, 3, 62), (11, 1, 64), (12, 4, 65), (16, 2, 67), (18, 2, 69), (20, 4, 65), (24, 3, 62), (27, 1, 60), (28, 4, 57)]
+for (b, ln, m) in CELLO:
+    music.add(cello(hz(m), ln * BEAT), 55.0 + b * BEAT, pan=-0.15, gain=0.13)
 
 print("transitions")
 for c in CUTS:
     wl = whoosh(); wr = whoosh(); n = len(wl); pan = np.linspace(-0.8, 0.8, n)
-    i0 = int((c - 1.15) * SR)
-    fx.L[i0:i0 + n] += wl * 0.09 * (1 - pan) / 2 * 1.4; fx.R[i0:i0 + n] += wr * 0.09 * (1 + pan) / 2 * 1.4
-    fx.add(boom(), c - 0.05, gain=0.30 if c < 80 else 0.42)
-fx.add(boom(1.8, 48), 1.3, gain=0.35)   # wordmark lands
+    i0 = int((c - 1.2) * SR)
+    fx.L[i0:i0 + n] += wl * 0.07 * (1 - pan) / 2 * 1.4; fx.R[i0:i0 + n] += wr * 0.07 * (1 + pan) / 2 * 1.4
+    fx.add(boom(), c - 0.05, gain=0.32 if c < 80 else 0.45)
+fx.add(boom(2.0, 45), 1.3, gain=0.35)   # wordmark lands
 
 print("ambience")
 def pink(n):
@@ -201,7 +189,7 @@ t = np.arange(N) / SR
 for buf, ph in ((amb.L, 0.0), (amb.R, 1.7)):
     w = bandpass(pink(N), 150, 2000)
     lfo = 0.55 + 0.45 * np.sin(2 * np.pi * 0.05 * t + ph) * np.sin(2 * np.pi * 0.013 * t + ph * 2)
-    buf += w * np.clip(lfo, 0.1, 1.2) * 0.012
+    buf += w * np.clip(lfo, 0.1, 1.2) * 0.014
 
 def chirp():
     sig = []
@@ -210,7 +198,7 @@ def chirp():
         f0 = rng.uniform(2600, 4600); f = f0 + (f0 * rng.uniform(0.7, 1.4) - f0) * (tt / d) ** 1.5
         sig += [np.sin(2 * np.pi * np.cumsum(f) / SR) * np.hanning(n), np.zeros(int(rng.uniform(0.04, 0.1) * SR))]
     return np.concatenate(sig)
-for _ in range(20):
+for _ in range(18):
     tt = rng.uniform(0.5, 88.0)
     if any(abs(tt - c) < 1.2 for c in CUTS): continue
     amb.add(chirp(), tt, pan=rng.uniform(-0.9, 0.9), gain=rng.uniform(0.015, 0.03))
@@ -220,11 +208,10 @@ print("mix")
 L = reverb(music.L) + fx.L + amb.L
 R = reverb(music.R) + fx.R + amb.R
 mix = np.stack([L, R], 1)
-# gentle bus compression via soft clip, then normalise
 mix = np.tanh(mix * 1.1) / math.tanh(1.1)
 mix *= 0.9 / np.max(np.abs(mix))
 fi = int(0.3 * SR); mix[:fi] *= np.linspace(0, 1, fi)[:, None]
-fo = int(3.0 * SR); mix[-fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.4
+fo = int(3.5 * SR); mix[-fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.4
 os.makedirs(OUT, exist_ok=True)
 wavfile.write(os.path.join(OUT, "audio.wav"), SR, (mix * 32767).astype(np.int16))
 print("wrote", os.path.join(OUT, "audio.wav"))
