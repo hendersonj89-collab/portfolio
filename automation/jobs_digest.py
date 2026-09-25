@@ -21,12 +21,18 @@ LINKEDIN_KEYWORDS = [
     "CPA senior accountant", "CPA controller", "accounting manager CPA",
     "financial reporting manager", "corporate tax CPA", "tax manager",
     "financial analyst CPA", "FP&A analyst", "financial data analyst",
-    "CPA facilitator OR instructor",
+    "accounting manager remote", "senior accountant remote",
 ]
 CPAO_KEYWORDS = ["remote"]
 JOBBANK_KEYWORDS = ["accountant CPA remote", "controller remote", "financial analyst remote", "tax remote"]
 
-EXCLUDE_TITLE = re.compile(r"\b(bookkeeper|clerk|intern|co-op|receptionist|payroll administrator|junior)\b", re.I)
+EXCLUDE_TITLE = re.compile(
+    r"\b(bookkeeper|clerk|intern|co-op|receptionist|payroll administrator|junior|board member|tenure|faculty|"
+    r"apprenticeship|graduate program|programme)\b", re.I)
+# French-language postings (Quebec) are skipped; bilingual titles usually repeat the English after a slash.
+FRENCH_TITLE = re.compile(
+    r"(contr\u00f4leur|comptable|analyste|conseill|sp\u00e9cialiste|chef\.fe|directeur|directrice|financi\u00e8re|"
+    r"gestionnaire|adjoint|responsable|v\u00e9rificat)", re.I)
 
 
 def get(url, timeout=20):
@@ -88,9 +94,9 @@ def cpa_ontario(hours, log):
                     continue
             except ValueError:
                 pass
-            m = re.search(r"job with (.+?)(?: \||$)", title)
-            out.append({"source": "cpaontario", "title": title.split(" job with ")[0],
-                        "company": m.group(1) if m else "", "location": desc[:120],
+            company, _, role = title.partition(": ")
+            out.append({"source": "cpaontario", "title": role or title,
+                        "company": company if role else "", "location": desc[:120],
                         "posted": pub, "url": link, "query": kw})
     return out
 
@@ -117,7 +123,7 @@ def jobbank(hours, log):
                         "company": clean(m_co.group(1)) if m_co else "",
                         "location": clean(m_loc.group(1)) if m_loc else "",
                         "posted": clean(m_date.group(1)) if m_date else "",
-                        "url": "https://www.jobbank.gc.ca" + m_link.group(1).split("?")[0], "query": kw})
+                        "url": "https://www.jobbank.gc.ca" + re.sub(r";jsessionid=[^?]*", "", m_link.group(1)).split("?")[0], "query": kw})
         time.sleep(1)
     return out
 
@@ -134,6 +140,12 @@ def main():
     for j in jobs:
         if EXCLUDE_TITLE.search(j["title"]):
             continue
+        if FRENCH_TITLE.search(j["title"]) and "/" not in j["title"]:
+            continue
+        if "/" in j["title"] and FRENCH_TITLE.search(j["title"]):
+            # keep the English half of a bilingual title
+            halves = [h.strip() for h in j["title"].split("/")]
+            j["title"] = next((h for h in halves if not FRENCH_TITLE.search(h)), j["title"])
         key = (j["title"].lower(), j["company"].lower())
         if key in seen:
             continue
