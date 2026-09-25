@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Fetch fresh remote-in-Canada job postings from structured sources.
+
+Sources (no API keys needed):
+  1. LinkedIn guest job search (remote filter, last N hours)
+  2. CPA Ontario Career Centre RSS (Madgex board)
+  3. Job Bank Canada search, sorted by date
+
+Usage: python3 jobs_digest.py [--hours 48] [--json out.json]
+Prints a markdown list of new postings; writes JSON if --json given.
+Stdlib only, so it runs anywhere with python3.
+"""
+import argparse, html, json, re, sys, time, urllib.parse, urllib.request
+from datetime import datetime, timedelta, timezone
+from xml.etree import ElementTree as ET
+
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+      "Accept-Language": "en-CA,en;q=0.9"}
+
+LINKEDIN_KEYWORDS = [
+    "CPA senior accountant", "CPA controller", "accounting manager CPA",
+    "financial reporting manager", "corporate tax CPA", "tax manager",
+    "financial analyst CPA", "FP&A analyst", "financial data analyst",
+    "CPA facilitator OR instructor",
+]
+CPAO_KEYWORDS = ["remote"]
+JOBBANK_KEYWORDS = ["accountant CPA remote", "controller remote", "financial analyst remote", "tax remote"]
+
+EXCLUDE_TITLE = re.compile(r"\b(bookkeeper|clerk|intern|co-op|receptionist|payroll administrator|junior)\b", re.I)
+
+
+def get(url, timeout=20):
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def clean(s):
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
+
+
+def linkedin(hours, log):
+    out = []
+    for kw in LINKEDIN_KEYWORDS:
+        q = urllib.parse.urlencode({"keywords": kw, "location": "Canada", "f_WT": "2",
+                                    "f_TPR": f"r{hours*3600}", "start": 0})
+        url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + q
+        try:
+            body = get(url)
+        except Exception as e:
+            log.append(f"linkedin[{kw}]: {e}")
+            continue
+        for card in re.findall(r"<li>(.*?)</li>", body, re.S):
+            m_link = re.search(r'href="([^"]+)"', card)
+            m_title = re.search(r'class="base-search-card__title"[^>]*>(.*?)</h3>', card, re.S)
+            m_co = re.search(r'class="base-search-card__subtitle"[^>]*>(.*?)</h4>', card, re.S)
+            m_loc = re.search(r'class="job-search-card__location"[^>]*>(.*?)</span>', card, re.S)
+            m_date = re.search(r'datetime="([^"]+)"', card)
+            if not (m_link and m_title):
+                continue
+            out.append({"source": "linkedin", "title": clean(m_title.group(1)),
+                        "company": clean(m_co.group(1)) if m_co else "",
+                        "location": clean(m_loc.group(1)) if m_loc else "Canada (remote)",
+                        "posted": m_date.group(1) if m_date else "",
+                        "url": m_link.group(1).split("?")[0], "query": kw})
+        time.sleep(1)
+    return out
+
+
+def cpa_ontario(hours, log):
+    out = []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    for kw in CPAO_KEYWORDS:
+        url = "https://mycareer.cpaontario.ca/jobsrss/?" + urllib.parse.urlencode({"keywords": kw})
+        try:
+            root = ET.fromstring(get(url))
+        except Exception as e:
+            log.append(f"cpaontario[{kw}]: {e}")
+            continue
+        for item in root.iter("item"):
+            title = clean(item.findtext("title"))
+            link = (item.findtext("link") or "").strip()
+            pub = item.findtext("pubDate") or ""
+            desc = clean(item.findtext("description"))
+            try:
+                dt = datetime.strptime(pub[:25].strip(), "%a, %d %b %Y %H:%M:%S").replace(tzinfo=timezone.utc)
+                if dt < cutoff:
+                    continue
+            except ValueError:
+                pass
+            m = re.search(r"job with (.+?)(?: \||$)", title)
+            out.append({"source": "cpaontario", "title": title.split(" job with ")[0],
+                        "company": m.group(1) if m else "", "location": desc[:120],
+                        "posted": pub, "url": link, "query": kw})
+    return out
+
+
+def jobbank(hours, log):
+    out = []
+    for kw in JOBBANK_KEYWORDS:
+        q = urllib.parse.urlencode({"searchstring": kw, "sort": "D", "fage": "2" if hours <= 48 else "7"})
+        url = "https://www.jobbank.gc.ca/jobsearch/jobsearch?" + q
+        try:
+            body = get(url)
+        except Exception as e:
+            log.append(f"jobbank[{kw}]: {e}")
+            continue
+        for art in re.findall(r"<article[^>]*>(.*?)</article>", body, re.S):
+            m_link = re.search(r'href="(/jobsearch/jobposting/[^"]+)"', art)
+            m_title = re.search(r'class="noctitle[^"]*"[^>]*>(.*?)</span>', art, re.S)
+            m_co = re.search(r'class="business"[^>]*>(.*?)</li>', art, re.S)
+            m_loc = re.search(r'class="location"[^>]*>(.*?)</li>', art, re.S)
+            m_date = re.search(r'class="date"[^>]*>(.*?)</li>', art, re.S)
+            if not (m_link and m_title):
+                continue
+            out.append({"source": "jobbank", "title": clean(m_title.group(1)),
+                        "company": clean(m_co.group(1)) if m_co else "",
+                        "location": clean(m_loc.group(1)) if m_loc else "",
+                        "posted": clean(m_date.group(1)) if m_date else "",
+                        "url": "https://www.jobbank.gc.ca" + m_link.group(1).split("?")[0], "query": kw})
+        time.sleep(1)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hours", type=int, default=48)
+    ap.add_argument("--json")
+    a = ap.parse_args()
+    log, jobs = [], []
+    for fn in (linkedin, cpa_ontario, jobbank):
+        jobs += fn(a.hours, log)
+    seen, uniq = set(), []
+    for j in jobs:
+        if EXCLUDE_TITLE.search(j["title"]):
+            continue
+        key = (j["title"].lower(), j["company"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(j)
+    if a.json:
+        with open(a.json, "w") as f:
+            json.dump({"fetched_at": datetime.now(timezone.utc).isoformat(), "jobs": uniq, "errors": log}, f, indent=1)
+    print(f"# {len(uniq)} postings (last {a.hours}h), {len(jobs)-len(uniq)} dupes/excluded dropped\n")
+    for j in uniq:
+        print(f"- [{j['source']}] {j['title']} — {j['company']} — {j['location']} — {j['posted']}\n  {j['url']}")
+    if log:
+        print("\n# errors\n" + "\n".join(log), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
