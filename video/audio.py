@@ -21,7 +21,7 @@ BPM = 80.0
 BEAT = 60.0 / BPM          # 0.75 s
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
-CUTS = [8.0, 19.0, 30.0, 41.0, 51.0, 56.0]   # must match SCENES in render.py
+CUTS = [7.0, 17.0, 29.0, 39.0, 49.0, 55.0]   # must match SCENES in render.py
 
 rng = np.random.default_rng(42)
 L = np.zeros(N); R = np.zeros(N)
