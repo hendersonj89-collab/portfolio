@@ -24,26 +24,31 @@ SR = 48000
 
 # (start time, text) — timed to the 90 s cut; each line must finish inside its scene
 CUES = [
-    (3.2, "Moe-zay-ick Forest Management. Where innovation and stewardship meet."),
+    (3.2, "Mosaic Forest Management. Where innovation and stewardship meet."),
     (11.2, "We're redefining the forest economy. Forestry, renewable energy, watershed services, recreation, real estate, and carbon. "
            "One landscape, serving the public good."),
-    (25.0, "In the Coke-sigh-la Watershed, we're piloting a new approach: longer growth periods, harvest designs that protect water, "
+    (25.0, "In the Koksilah Watershed, we're piloting a new approach: longer growth periods, harvest designs that protect water, "
            "stronger stream protection and smaller road footprints, with seven hundred and fifteen hectares of older forest set aside."),
-    (43.2, "It's why we're called Moe-zay-ick. Small patches on their own clocks, so the forest is never all one age, and never all one use."),
+    (43.2, "It's why we're called Mosaic. Small patches on their own clocks, so the forest is never all one age, and never all one use."),
     (56.2, "And BC mills come first. Every log is offered to domestic manufacturers before export. "
-           "Over sixty mills rely on Moe-zay-ick. Thirty of them, here on Vancouver Island."),
+           "Over sixty mills rely on Mosaic. Thirty of them, here on Vancouver Island."),
     (71.2, "Keeping fibre flowing to BC mills, forestry workers and contractors busy, and coastal communities strong."),
-    (81.8, "Moe-zay-ick Forest Management. Innovation and stewardship meet here."),
+    (81.8, "Mosaic Forest Management. Innovation and stewardship meet here."),
 ]
 SCENE_ENDS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0, 90.0]
+PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə"}   # IPA overrides
 
 def synth(voice, speed):
     from kokoro_onnx import Kokoro
     k = Kokoro(os.path.join(HERE, "tts", "kokoro-v1.0.onnx"), os.path.join(HERE, "tts", "voices-v1.0.bin"))
     lang = "en-gb" if voice.startswith("b") else "en-us"
+    # the phonemizer gets these wrong (Mosaic -> "muh-SAY-ik"), so patch the phoneme string
+    fixes = {w: (k.tokenizer.phonemize(w, lang=lang).strip(), ipa) for w, ipa in PRONOUNCE.items()}
     cues = []
     for (t0, txt), end in zip(CUES, SCENE_ENDS):
-        s, sr = k.create(txt, voice=voice, speed=speed, lang=lang)
+        ph = k.tokenizer.phonemize(txt, lang=lang)
+        for w, (bad, good) in fixes.items(): ph = ph.replace(bad, good)
+        s, sr = k.create(ph, voice=voice, speed=speed, lang=lang, is_phonemes=True)
         s = signal.resample_poly(s, SR, sr).astype(np.float64)
         s = s / (np.max(np.abs(s)) + 1e-9)
         dur = len(s) / SR
@@ -80,7 +85,7 @@ def duck_envelope(v, depth_db=-9.0, attack=0.08, release=0.9):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--voice", default="af_heart")
-    ap.add_argument("--speed", type=float, default=0.95)
+    ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--voice-gain", type=float, default=0.8)
     a = ap.parse_args()
     print(f"synthesising with {a.voice} @ {a.speed}")
