@@ -1,10 +1,19 @@
 # Daily remote jobs (Canada) digest
 
-A scheduled Claude Code routine that runs every morning, searches the web for
-remote jobs in Canada matching my profile, and emails a short ranked digest.
+A scheduled Claude Code routine that runs every morning, pulls remote jobs in
+Canada posted in the last 48 hours from structured feeds, ranks them against my
+profile, and emails a short digest.
 
 - **Schedule:** daily at 14:00 UTC (7 am Pacific / 8 am Mountain / 10 am Eastern)
 - **Runs as:** a fresh Claude Code session per day (no repo changes, no connectors)
+- **Sources:** `jobs_digest.py` (this folder) fetches LinkedIn's guest job search
+  with the remote-in-Canada filter, the CPA Ontario Career Centre RSS feed, and
+  Job Bank Canada sorted by date. Stdlib only, no API keys. The routine curls it
+  from this branch on GitHub, so edits here take effect on the next run.
+- **Needs:** the environment's network access set to full internet (or
+  www.linkedin.com, mycareer.cpaontario.ca, www.jobbank.gc.ca and
+  raw.githubusercontent.com allowlisted). Web search alone returns only stale
+  aggregator pages.
 - **Delivery:** push notification + email with the session summary; open the
   session for the full list
 - **Manage it:** claude.ai/code → Routines (pause, edit schedule, edit prompt, delete)
@@ -35,6 +44,7 @@ line (title, company, remote status, salary, posted date, apply link) plus one
 
 ## Tuning
 
-Edit the routine prompt to change target roles, add or drop job boards, tighten
-the date window, or add salary floors. Change the cron expression to shift the
+Edit the keyword lists and exclusion regexes at the top of `jobs_digest.py` to
+change what gets fetched. Edit the routine prompt to change ranking priorities
+or add salary floors. Run locally with `python3 jobs_digest.py --hours 48`. Change the cron expression to shift the
 time or limit to weekdays (`0 14 * * 1-5`).
