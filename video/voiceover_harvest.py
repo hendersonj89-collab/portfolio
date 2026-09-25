@@ -29,18 +29,19 @@ CUES = [
           "where a processor bucks them to length and a loader fills the truck. Machines drive to the tree, so cycles are short and the cost per cubic metre is low."),
     (34.4, "On steep ground, machines can't drive to the tree, so the tree comes to the machine. A cable yarder stands on the road, a skyline runs down to an anchor, "
            "and a carriage pulls each turn of logs uphill. It takes a bigger crew, each cycle is longer, and the cost per cubic metre is higher."),
-    (59.4, "Tethered harvesting bridges the gap. An anchor machine on the road pays out a winch line, so a harvester can work safely on slopes it could never hold on its own. "
-           "Fewer hand fallers and more mechanized work, but more equipment to own and to move."),
-    (79.4, "Here's the challenge. Each turn on the yarder costs about the same, whether it carries three large logs or eight small ones. "
+    (59.4, "Tethered harvesting stretches ground-based logging onto slopes that used to need a yarder, or a hand faller. "
+           "An anchor on the road keeps a winch line tight, giving a feller-buncher the traction to work the slope, cutting each tree and laying it in a bunch. "
+           "A tethered skidder then drags the bunch up to the road, where it's bucked and loaded as before. Safer than hand falling, but more machines to own and move."),
+    (87.4, "Here's the challenge. Each turn on the yarder costs about the same, whether it carries three large logs or eight small ones. "
            "As piece size drops, so do the cubic metres per turn, and the cost of every cubic metre climbs."),
-    (104.4, "Moving is expensive too. A yarder travels by lowbed, and a move can take days. Wages, equipment payments and insurance keep running while no logs are produced. "
+    (112.4, "Moving is expensive too. A yarder travels by lowbed, and a move can take days. Wages, equipment payments and insurance keep running while no logs are produced. "
             "Smaller blocks mean more moves, and every move comes straight out of a contractor's margin."),
-    (124.4, "Connected machines change the picture. Live data on production, hours, fuel and location lets us plan blocks and moves together, cut idle time, "
+    (132.4, "Connected machines change the picture. Live data on production, hours, fuel and location lets us plan blocks and moves together, cut idle time, "
             "match the right machine to the right ground, and pay contractors on accurate numbers."),
-    (146.0, "Better data. Better decisions. Stronger contractors."),
-    (150.4, "Mosaic Forest Management."),
+    (154.0, "Better data. Better decisions. Stronger contractors."),
+    (158.4, "Mosaic Forest Management."),
 ]
-SCENE_ENDS = [11.0, 33.0, 58.0, 78.0, 103.0, 123.0, 145.0, 153.0, 153.0]
+SCENE_ENDS = [11.0, 33.0, 58.0, 86.0, 111.0, 131.0, 153.0, 161.0, 161.0]
 PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə", "contractors": "kˈɑːntɹæktɚz"}   # IPA overrides
 
 def synth(voice, speed):
@@ -63,7 +64,7 @@ def synth(voice, speed):
     return cues
 
 def voice_track(cues):
-    n = int(153 * SR); v = np.zeros(n)
+    n = int(161 * SR); v = np.zeros(n)
     for t0, s in cues:
         i0 = int(t0 * SR); s = s[: n - i0]
         v[i0:i0 + len(s)] += s
