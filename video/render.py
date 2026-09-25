@@ -20,7 +20,7 @@ from scipy.spatial import Voronoi
 
 W, H = 1920, 1080
 FPS = 30
-DUR = 60.0
+DUR = 90.0
 NFRAMES = int(DUR * FPS)
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
@@ -753,26 +753,28 @@ def scene_outro(ctx, t, T):
         text(ctx, "Innovation and stewardship ", x, 660, 46, C["navy"], fam="Jost Light", alpha=e)
         text(ctx, "meet here.", x + w1, 660, 46, C["navy"], fam="Jost SemiBold", alpha=e)
     reveal_text(ctx, "mosaicforests.com", 960, 760, 26, C["aqua2"], seg(t, 2.2, 3.0), fam="Jost Medium", align="center", tracking=3)
-    fo = seg(t, 4.2, 5.0)
+    fo = seg(T, DUR - 1.2, DUR - 0.2)
     if fo > 0:
         set_col(ctx, C["white"], ease_in_out(fo)); ctx.paint()
 
 # ----------------------------------------------------------------------------- timeline
+# (start, end, fn, stretch) — local time passed to a scene is (T - start) * stretch, so
+# reveals run slower than they were authored and the remainder of each scene holds.
 SCENES = [
-    (0.0, 7.0, scene_title),
-    (7.0, 17.0, scene_portfolio),
-    (17.0, 29.0, scene_koksilah),
-    (29.0, 39.0, scene_mosaic),
-    (39.0, 49.0, scene_mills),
-    (49.0, 55.0, scene_working),
-    (55.0, 60.0, scene_outro),
+    (0.0, 10.0, scene_title, 0.72),
+    (10.0, 24.0, scene_portfolio, 0.62),
+    (24.0, 42.0, scene_koksilah, 0.72),
+    (42.0, 55.0, scene_mosaic, 0.7),
+    (55.0, 70.0, scene_mills, 0.72),
+    (70.0, 80.0, scene_working, 0.7),
+    (80.0, 90.0, scene_outro, 0.6),
 ]
-TRANS = 1.6
+TRANS = 1.8
 
 def render_scene(idx, T):
-    s0, s1, fn = SCENES[idx]
+    s0, s1, fn, k = SCENES[idx]
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
-    fn(cairo.Context(surf), T - s0, T)
+    fn(cairo.Context(surf), (T - s0) * k, T)
     return surf
 
 def mosaic_wipe(ctx, surfA, surfB, p, cell=64):
@@ -795,14 +797,14 @@ def render_frame(fi, scale=1.0):
     T = fi / FPS
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(W * scale), int(H * scale))
     ctx = cairo.Context(surf); ctx.scale(scale, scale)
-    idx = max(i for i, (s0, s1, _) in enumerate(SCENES) if T >= s0)
+    idx = max(i for i, sc in enumerate(SCENES) if T >= sc[0])
     cut = SCENES[idx][0]; nxt = SCENES[idx + 1][0] if idx + 1 < len(SCENES) else None
     if idx > 0 and T < cut + TRANS / 2:
         mosaic_wipe(ctx, render_scene(idx - 1, T), render_scene(idx, T), (T - (cut - TRANS / 2)) / TRANS)
     elif nxt is not None and T >= nxt - TRANS / 2:
         mosaic_wipe(ctx, render_scene(idx, T), render_scene(idx + 1, T), (T - (nxt - TRANS / 2)) / TRANS)
     else:
-        SCENES[idx][2](ctx, T - cut, T)
+        SCENES[idx][2](ctx, (T - cut) * SCENES[idx][3], T)
     vignette(ctx); grain(ctx, fi)
     surf.flush()
     return surf

@@ -1,4 +1,8 @@
 video/out/*
 !video/out/final.mp4
+!video/out/final_web.mp4
 !video/out/contact.png
+video/tts/*.onnx
+video/tts/*.bin
+video/tts/*.wav
 __pycache__/

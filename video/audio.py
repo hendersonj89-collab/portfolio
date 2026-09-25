@@ -14,14 +14,14 @@ from scipy import signal
 from scipy.io import wavfile
 
 SR = 48000
-DUR = 60.0
+DUR = 90.0
 N = int(SR * DUR)
 BPM = 96.0
 BEAT = 60.0 / BPM            # 0.625 s
 BAR = 4 * BEAT               # 2.5 s
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
-CUTS = [7.0, 17.0, 29.0, 39.0, 49.0, 55.0]   # must match SCENES in render.py
+CUTS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0]   # must match SCENES in render.py
 
 rng = np.random.default_rng(7)
 
@@ -54,7 +54,7 @@ def env_adsr(n, a, d, s, r):
     return e
 
 # ----------------------------------------------------------------------------- harmony: G  Em  C  D  (5 s per chord)
-PROG = [("G", 55, 4), ("Em", 52, 3), ("C", 48, 4), ("D", 50, 4)] * 2 + [("G", 55, 4), ("Em", 52, 3), ("C", 48, 4), ("G", 55, 4)]
+PROG = [("G", 55, 4), ("Em", 52, 3), ("C", 48, 4), ("D", 50, 4)] * 4 + [("G", 55, 4), ("G", 55, 4)]
 CHORD_LEN = 2 * BAR
 
 def chord_at(t): return PROG[min(int(t / CHORD_LEN), len(PROG) - 1)]
@@ -137,30 +137,30 @@ for i in range(int(DUR / E)):
     k = i % 8
     m = root + pat[k] + (12 if (i // 16) % 4 == 3 and k in (2, 6) else 0)
     # intro: sparse (every other), full ostinato from the first cut
-    if t < 7 and k % 2 == 1: continue
-    if t >= 55 and k not in (0, 2, 4): continue
+    if t < 10 and k % 2 == 1: continue
+    if t >= 80 and k not in (0, 2, 4): continue
     vel = 0.85 if k == 0 else 0.55 + 0.2 * (k % 2 == 0) + 0.06 * rng.random()
-    if t < 7: vel *= 0.8
+    if t < 10: vel *= 0.8
     music.add(piano(hz(m), 2.4, vel), t + rng.uniform(-0.004, 0.004), pan=(m - 67) / 30, gain=0.34)
 # left hand: bass octave on beat 1, fifth on beat 3
 for bar in range(int(DUR / BAR)):
     t = bar * BAR; name, root, third = chord_at(t)
     music.add(piano(hz(root - 12), 3.0, 0.75), t, pan=-0.25, gain=0.30)
-    if t >= 7: music.add(piano(hz(root - 5), 2.4, 0.55), t + 2 * BEAT, pan=-0.2, gain=0.22)
+    if t >= 10: music.add(piano(hz(root - 5), 2.4, 0.55), t + 2 * BEAT, pan=-0.2, gain=0.22)
 
 print("strings")
 for ci, (name, root, third) in enumerate(PROG):
     t0 = ci * CHORD_LEN
-    if t0 + CHORD_LEN <= 7: continue
+    if t0 + CHORD_LEN <= 10: continue
     dur = CHORD_LEN + 1.6
-    swell = 0.55 if t0 < 17 else 0.8 if t0 < 29 else 1.0
+    swell = 0.55 if t0 < 24 else 0.8 if t0 < 42 else 1.0
     for k, iv in enumerate([12, 12 + third, 19, 24]):
         music.add(strings(hz(root + iv), dur), t0, pan=(k - 1.5) * 0.4, gain=0.045 * swell)
 
 print("bass")
 for bar in range(int(DUR / BAR)):
     t = bar * BAR
-    if t < 17 or t >= 55: continue
+    if t < 24 or t >= 80: continue
     name, root, third = chord_at(t)
     for beat, iv, g in ((0, 0, 1.0), (2, 0, 0.8), (3.5, 7, 0.55)):
         n = int(1.2 * BEAT * SR); tt = np.arange(n) / SR; f = hz(root - 24)
@@ -170,25 +170,28 @@ for bar in range(int(DUR / BAR)):
 print("percussion")
 for beat in range(int(DUR / BEAT)):
     t = beat * BEAT
-    if t < 29 or t >= 55: continue
-    build = 0.75 if t < 39 else 1.0
+    if t < 42 or t >= 80: continue
+    build = 0.75 if t < 55 else 1.0
     music.add(kick(build), t, gain=0.55)
-    if t >= 39 and beat % 2 == 1: music.add(snare(), t, gain=0.16)
+    if t >= 55 and beat % 2 == 1: music.add(snare(), t, gain=0.16)
     for s in range(4):
         music.add(shaker(accent=1.0 if s == 2 else 0.2), t + s * BEAT / 4, pan=0.35, gain=0.05 * build)
 
 print("lead")
-MELODY = [(64, 2, 79), (66, 1, 81), (67, 1, 83), (68, 3, 86), (72, 2, 83), (74, 1, 81), (75, 1, 79), (76, 3, 81),
-          (80, 2, 79), (82, 1, 76), (83, 1, 79), (84, 3, 83), (88, 2, 81), (90, 1, 79), (91, 1, 78), (92, 4, 79)]
+MELODY = [(0, 2, 79), (2, 1, 81), (3, 1, 83), (4, 3, 86), (8, 2, 83), (10, 1, 81), (11, 1, 79), (12, 3, 81),
+          (16, 2, 79), (18, 1, 76), (19, 1, 79), (20, 3, 83), (24, 2, 81), (26, 1, 79), (27, 1, 78), (28, 4, 79),
+          (32, 2, 83), (34, 1, 86), (35, 1, 83), (36, 3, 81), (40, 1.5, 79), (41.5, 1.5, 81), (43, 2, 83), (45, 3, 86),
+          (48, 2, 84), (50, 1, 83), (51, 1, 81), (52, 3, 79), (56, 2, 78), (58, 1, 76), (59, 1, 78), (60, 5, 79)]
+LEAD_START = 55.0 / BEAT   # lead enters on the mills scene
 for (b, ln, m) in MELODY:
-    music.add(lead(hz(m), ln * BEAT), b * BEAT, pan=0.15, gain=0.16)
+    music.add(lead(hz(m), ln * BEAT), (LEAD_START + b) * BEAT, pan=0.15, gain=0.16)
 
 print("transitions")
 for c in CUTS:
     wl = whoosh(); wr = whoosh(); n = len(wl); pan = np.linspace(-0.8, 0.8, n)
     i0 = int((c - 1.15) * SR)
     fx.L[i0:i0 + n] += wl * 0.09 * (1 - pan) / 2 * 1.4; fx.R[i0:i0 + n] += wr * 0.09 * (1 + pan) / 2 * 1.4
-    fx.add(boom(), c - 0.05, gain=0.30 if c < 55 else 0.42)
+    fx.add(boom(), c - 0.05, gain=0.30 if c < 80 else 0.42)
 fx.add(boom(1.8, 48), 1.3, gain=0.35)   # wordmark lands
 
 print("ambience")
@@ -207,8 +210,8 @@ def chirp():
         f0 = rng.uniform(2600, 4600); f = f0 + (f0 * rng.uniform(0.7, 1.4) - f0) * (tt / d) ** 1.5
         sig += [np.sin(2 * np.pi * np.cumsum(f) / SR) * np.hanning(n), np.zeros(int(rng.uniform(0.04, 0.1) * SR))]
     return np.concatenate(sig)
-for _ in range(14):
-    tt = rng.uniform(0.5, 58.0)
+for _ in range(20):
+    tt = rng.uniform(0.5, 88.0)
     if any(abs(tt - c) < 1.2 for c in CUTS): continue
     amb.add(chirp(), tt, pan=rng.uniform(-0.9, 0.9), gain=rng.uniform(0.015, 0.03))
 
