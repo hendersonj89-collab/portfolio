@@ -1,0 +1,4 @@
+video/out/*
+!video/out/final.mp4
+!video/out/contact.png
+__pycache__/
