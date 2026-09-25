@@ -164,7 +164,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=48)
     ap.add_argument("--json")
-    ap.add_argument("--details", type=int, default=60, help="fetch flags/salary for up to N LinkedIn rows (0 = skip)")
+    ap.add_argument("--details", type=int, default=100, help="fetch flags/salary for up to N LinkedIn rows (0 = skip)")
     a = ap.parse_args()
     log, jobs = [], []
     for fn in (linkedin, cpa_ontario, jobbank):
