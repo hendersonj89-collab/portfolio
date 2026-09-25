@@ -90,7 +90,7 @@ def feller_buncher(ctx, x, y, s=1.0, phase=0.0, alpha=1.0):
     cab(ctx, x - 20 * s, y - 70 * s, 62 * s, 46 * s, C["lime"], alpha)
     reach = 150 * s + 12 * s * math.sin(phase)
     hy = y - 20 * s - 25 * s * (0.5 + 0.5 * math.sin(phase * 1.3))
-    j1 = (x - 40 * s, y - 92 * s); j2 = (x - 120 * s, y - 130 * s); j3 = (x - reach, hy)
+    j1 = (x - 14 * s, y - 100 * s); j2 = (x - 120 * s, y - 130 * s); j3 = (x - reach, hy)
     boom(ctx, [j1, j2, j3], 10 * s, alpha)
     # felling head: disc saw
     ctx.new_path(); ctx.arc(j3[0], j3[1] + 14 * s, 22 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
@@ -153,7 +153,7 @@ def yarder(ctx, x, y, s=1.0, alpha=1.0):
     rrect(ctx, x - 38 * s, top[1], 16 * s, 330 * s - 82 * s, 4); stroke_fill(ctx, C["paper"], alpha=alpha)
     ctx.new_path(); ctx.arc(top[0], top[1], 10 * s, 0, 2 * math.pi); stroke_fill(ctx, C["paper"], alpha=alpha)
     # guylines back to anchors
-    for gx in (x + 160 * s, x + 260 * s):
+    for gx in (x + 150 * s, x + 235 * s):
         cable(ctx, top, (gx, y), sag=6, lw=1.6, alpha=0.8 * alpha)
         stump(ctx, gx, y, 10 * s, alpha)
     return top
@@ -252,64 +252,178 @@ def s_title(ctx, t, T):
         x = 960 + (k - 1) * 260; e = ease_out_back(p)
         ctx.save(); ctx.translate(x, 850); ctx.scale(e * 0.42, e * 0.42)
         if kind == "ground": feller_buncher(ctx, 40, 30, 1.0, 0)
-        elif kind == "cable": top = yarder(ctx, 60, 30, 0.6); cable(ctx, top, (-220, 60), sag=20)
-        else: excavator(ctx, 60, 30, 0.8, C["green"], tool="head", boom_pts=[(50, -40), (-40, -110), (-140, -20)])
+        elif kind == "cable": top = yarder(ctx, 60, 30, 0.6); cable(ctx, top, (-220, 30), sag=20); stump(ctx, -220, 30, 10)
+        else:
+            cable(ctx, (110, 10), (260, -70), sag=4, lw=2.6, col=C["green2"]); stump(ctx, 262, -66, 12)
+            excavator(ctx, 60, 30, 0.8, C["green"], tool="head", boom_pts=[(50, -40), (-40, -110), (-140, -20)])
         ctx.restore()
         text(ctx, lab.upper(), x, 920, 15, C["grey"], fam="Jost Medium", align="center", tracking=4, alpha=ease_out_cubic(p))
 
 # ----------------------------------------------------------------------------- 2. ground-based (8-30)
 def g_ground(x): return 760 + 0.10 * (x - 1500) + 8 * math.sin(x * 0.006)
 
+G_TREES = [1150, 1060, 970, 880, 790]     # buncher works these uphill (leftwards), in order
+G_START = 1.0
+G_CYC = [3.4] + [2.6] * 4
+G_ST = [G_START + sum(G_CYC[:k]) for k in range(len(G_CYC))]
+G_LAY = math.pi / 2 + math.atan(0.10)     # laid to the right (downhill, behind the machine) along the ground
+GS_TRIPS = [8.6, 14.5, 20.4]              # skidder trips for bunches 0, 1, 2
+GS_OUT, GS_TURN, GS_GRAB, GS_HAUL, GS_DROP = 2.2, 0.4, 0.4, 2.4, 0.5
+GS_LAND = 1195                             # skidder stops here; tree-length lies to its left
+P_X, L_X, TR_X = 1330, 1600, 1830          # processor, loader, truck
+
+def g_tree_state(j, t):
+    c = t - G_ST[j]; L = G_CYC[j]
+    if c < 0: return "stand", 0.0
+    names = ("stand", "grip", "cut", "lay", "release"); e0 = 0.0
+    for name, f in zip(names, PH):
+        e1 = e0 + L * f
+        if c < e1: return name, (c - e0) / (e1 - e0)
+        e0 = e1
+    return "done", 1.0
+
 def s_ground(ctx, t, T):
     paper_bg(ctx, T, 0.7)
     terrain(ctx, g_ground)
-    road(ctx, g_ground, 1480, W + 20)
-    # trees: standing until the feller-buncher passes, then falling, then bunched
-    fb_x = 1380 - 620 * clamp((t - 1.0) / 14.0)    # moves left over 14 s
-    for i in range(16):
-        tx = 720 + i * 40 + (hsh(i, 1) - 0.5) * 24; ty = g_ground(tx); hgt = 150 + 60 * hsh(i, 2)
-        cut_t = 1.0 + (1380 - tx) / 620 * 14.0 + 0.3   # when the head reaches it
-        p = seg(t, cut_t, cut_t + 0.9)
-        if p >= 1:
-            stump(ctx, tx, ty); continue
-        ctx.save(); ctx.translate(tx, ty); ctx.rotate(-ease_in_out(p) * math.radians(80)); ctx.translate(-tx, -ty)
-        conifer(ctx, tx, ty, hgt, 1.0, seed=i, sway_t=T, tiers=11)
-        ctx.restore()
-        if p > 0: stump(ctx, tx, ty)
-    # bunches at the ground after felling (as logs lying on slope)
-    for i in range(16):
-        tx = 720 + i * 40 + (hsh(i, 1) - 0.5) * 24
-        cut_t = 1.0 + (1380 - tx) / 620 * 14.0 + 1.2
-        if t > cut_t and i % 3 == 0:
-            done = seg(t, cut_t + 2.0 + (16 - i) * 0.5, cut_t + 2.5 + (16 - i) * 0.5)   # skidder collected it
-            if done < 1: log(ctx, tx + 40, g_ground(tx + 40) - 8, 110, 12, math.atan(0.10), 1 - done)
-    feller_buncher(ctx, fb_x, g_ground(fb_x) + 2, 1.0, phase=T * 5)
-    # skidder shuttles between the cut and the landing
-    cyc = (t - 3.0) % 6.0; loaded = cyc > 3.0
-    if t > 3.0:
-        u = ease_in_out(cyc / 3.0) if not loaded else ease_in_out((cyc - 3.0) / 3.0)
-        sx = 1340 - 520 * u if not loaded else 820 + 520 * u
-        ctx.save()
-        if not loaded: ctx.translate(sx, 0); ctx.scale(-1, 1); ctx.translate(-sx, 0)   # face left when heading out
-        skidder(ctx, sx, g_ground(sx) + 2, 0.9, logs=3 if loaded else 0, bounce=math.sin(T * 14))
-        ctx.restore()
-    # landing: processor + loader + truck, log deck grows
-    excavator(ctx, 1560, g_ground(1560) + 2, 0.85, C["lime"], tool="head", phase=T * 3)
-    ndeck = min(9, int(max(0, (t - 8) / 1.6)))
-    for i in range(ndeck):
+    road(ctx, g_ground, 1250, W + 20)
+    gy = lambda x: g_ground(x) + 2
+    # ---- buncher state
+    k = max([i for i in range(len(G_TREES)) if t >= G_ST[i]], default=-1)
+    if k < 0: hx = 1290.0; phase, pp = "idle", 0.0
+    else:
+        phase, pp = g_tree_state(k, t)
+        goal = G_TREES[k] + 110; prev = 1290.0 if k == 0 else G_TREES[k - 1] + 110
+        hx = prev + (goal - prev) * ease_in_out(pp) if phase == "stand" else goal
+        if phase == "stand": phase = "travel"
+        if phase == "done": phase = "release"; pp = 1.0
+    hy = gy(hx); tilt = -math.atan2(g_ground(hx - 40) - g_ground(hx + 40), 80)
+    # ---- skidder trips
+    sk = None; picked = set(); delivered = []
+    for j, s0 in enumerate(GS_TRIPS):
+        if t < s0: break
+        butt = G_TREES[j] + 8; goal = butt + 100; c = t - s0
+        if c < GS_OUT: sx = GS_LAND + (goal - GS_LAND) * ease_in_out(c / GS_OUT); st = "out"
+        elif c < GS_OUT + GS_TURN: sx = goal; st = "turn"
+        elif c < GS_OUT + GS_TURN + GS_GRAB: sx = goal; st = "grab"
+        elif c < GS_OUT + GS_TURN + GS_GRAB + GS_HAUL: sx = goal + (GS_LAND - goal) * ease_in_out((c - GS_OUT - GS_TURN - GS_GRAB) / GS_HAUL); st = "haul"
+        elif c < GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP: sx = GS_LAND; st = "drop"
+        else: sx = GS_LAND; st = "wait"
+        sk = (sx, st, j, c)
+        if c >= GS_OUT + GS_TURN + GS_GRAB * 0.5: picked.add(j)
+        if c >= GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP * 0.6: delivered.append(s0 + GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP * 0.6)
+    # ---- background stand (never cut) + worked trees
+    for i in range(7):
+        tx = 615 + i * 28 + (hsh(i, 1) - 0.5) * 14; conifer(ctx, tx, gy(tx), 120 + 50 * hsh(i, 2), 1.0, seed=i, sway_t=T, tiers=10, alpha=0.75)
+    states = [(j, tx, gy(tx), 150 + 40 * hsh(j, 3)) + g_tree_state(j, t) for j, tx in enumerate(G_TREES)]
+    for j, tx, ty, hgt, ph, p in states:          # laid bunches first (behind the machine, near plane)
+        if ph in ("stand", "grip", "cut") or (ph in ("release", "done") and j in picked): continue
+        ang = G_LAY * ease_in_out(p) if ph == "lay" else G_LAY
+        ox, oy = (0, 0) if ph == "lay" else (8, 10)
+        ctx.save(); ctx.translate(tx + ox, ty + oy); ctx.rotate(ang); ctx.translate(-tx - ox, -ty - oy)
+        conifer(ctx, tx + ox, ty + oy, hgt, 1.0, seed=20 + j, sway_t=0, tiers=10); ctx.restore()
+    for j, tx, ty, hgt, ph, p in states:
+        if ph not in ("stand", "grip", "cut"): stump(ctx, tx, ty, 11); continue
+        conifer(ctx, tx, ty, hgt, 1.0, seed=20 + j, sway_t=T if ph == "stand" else 0, tiers=10)
+        if ph == "cut":
+            set_col(ctx, C["amber"], 0.9); ctx.set_line_width(3)
+            for m in range(5):
+                aa = -0.3 - m * 0.5 + p * 2; ctx.move_to(tx + 4, ty - 6); ctx.line_to(tx + 4 + 18 * math.cos(aa), ty - 6 + 18 * math.sin(aa))
+            ctx.stroke()
+    # ---- landing: tree-length fed through the processor, bucked logs on the deck, loader fills the truck
+    py = gy(P_X)
+    proc_start = delivered[-1] if delivered else None
+    feed = clamp((t - proc_start) / 2.4) if proc_start is not None else 1.0
+    head_x = 1108
+    if proc_start is not None and feed < 1:
+        shift = 150 * ease_in_out(feed)
+        ctx.save(); ctx.rectangle(0, 0, head_x, H); ctx.clip()
+        base = (head_x - 8 + shift, gy(head_x) + 6)
+        ctx.save(); ctx.translate(*base); ctx.rotate(math.pi / 2 - math.atan(0.10) + math.pi); ctx.translate(-base[0], -base[1])
+        conifer(ctx, base[0], base[1], 160, 1.0, seed=30, sway_t=0, tiers=10); ctx.restore(); ctx.restore()
+    bucked = 3 * len(delivered) - (0 if proc_start is None else int(round(3 * (1 - feed))))
+    loads = int(max(0, (t - 2.0) / 3.0))            # loader cycles completed
+    deck = max(0, 4 + bucked - loads); loaded = min(8, loads)
+    for i in range(deck):
         row, col = divmod(i, 3)
-        log(ctx, 1400 + col * 12, g_ground(1420) - 10 - row * 13, 110, 12, 0)
-    log_truck(ctx, 1800, g_ground(1800) + 2, 0.75, logs=min(8, int(max(0, (t - 12) / 1.4))))
-    # captions
+        log(ctx, 1410 + col * 12, gy(1420) - 8 - row * 12, 88, 11, 0)
+    # processor
+    excavator(ctx, P_X, py, 0.85, C["lime"], draw_boom=False)
+    proot = (P_X - 8, py - 62); ptip = (head_x + 10, gy(head_x) - 16) if (proc_start is not None and feed < 1) else (P_X - 150, py - 52)
+    pm = ((proot[0] + ptip[0]) / 2, (proot[1] + ptip[1]) / 2); pdx, pdy = ptip[0] - proot[0], ptip[1] - proot[1]; pl = math.hypot(pdx, pdy) or 1
+    boom(ctx, [proot, (pm[0] + pdy / pl * 60, pm[1] - pdx / pl * 60), ptip], 8)
+    harvest_head(ctx, ptip[0], ptip[1] + 8, math.pi / 2, 0.8)
+    # loader: grab at the deck, swing to the truck, release, return (3 s cycle)
+    ly = gy(L_X); lc = (t - 2.0) % 3.0 if t >= 2.0 else 0.0
+    deck_pt = (1440, gy(1420) - 60); truck_pt = (TR_X - 20, gy(TR_X) - 110)
+    if lc < 0.35: u = 0.0; carry = False; closed = lc / 0.35
+    elif lc < 1.6: u = ease_in_out((lc - 0.35) / 1.25); carry = True; closed = 1.0
+    elif lc < 1.9: u = 1.0; carry = False; closed = 1 - (lc - 1.6) / 0.3
+    else: u = 1 - ease_in_out((lc - 1.9) / 1.1); carry = False; closed = 0.0
+    if deck == 0: carry = False
+    ltip = (deck_pt[0] + (truck_pt[0] - deck_pt[0]) * u, deck_pt[1] + (truck_pt[1] - deck_pt[1]) * u - 60 * math.sin(math.pi * u))
+    excavator(ctx, L_X, ly, 0.85, C["aqua"], draw_boom=False)
+    lroot = (L_X - 8, ly - 62); lm = ((lroot[0] + ltip[0]) / 2, (lroot[1] + ltip[1]) / 2)
+    ldx, ldy = ltip[0] - lroot[0], ltip[1] - lroot[1]; ll = math.hypot(ldx, ldy) or 1
+    elbow = (lm[0] + ldy / ll * 60, lm[1] - ldx / ll * 60)
+    if elbow[1] > lm[1]: elbow = (lm[0] - ldy / ll * 60, lm[1] + ldx / ll * 60)
+    boom(ctx, [lroot, elbow, ltip], 8)
+    if carry: log(ctx, ltip[0], ltip[1] + 30, 88, 11, 0)
+    grapple(ctx, ltip[0], ltip[1], 1.0, closed)
+    log_truck(ctx, TR_X, gy(TR_X), 0.75, logs=loaded)
+    # ---- skidder: drives out facing left, turns, grapples the butts, hauls right with the trees trailing behind
+    if sk:
+        sx, st, j, c = sk; sy = gy(sx); stilt = -math.atan2(g_ground(sx - 40) - g_ground(sx + 40), 80)
+        facing_left = st == "out" or (st == "turn" and (c - GS_OUT) / GS_TURN < 0.5)
+        if st in ("grab", "haul"):
+            fx, fy = rotp(sx - 92, sy - 40, sx, sy, stilt)
+            grabbed = st == "haul" or (c - GS_OUT - GS_TURN) / GS_GRAB > 0.5
+            if grabbed:
+                for i in range(2):
+                    txl = fx - 150 - i * 8; tyl = g_ground(txl) - 4 - i * 6
+                    ang = math.atan2(txl - fx, -(tyl - fy))
+                    ctx.save(); ctx.translate(fx + i * 4, fy - i * 6); ctx.rotate(ang)
+                    conifer(ctx, 0, 0, 150 + 20 * i, 1.0, seed=20 + j + i, sway_t=0, tiers=10); ctx.restore()
+        ctx.save(); ctx.translate(sx, sy); ctx.rotate(stilt)
+        if facing_left: ctx.scale(-1, 1)
+        skidder(ctx, 0, 0, 0.85, logs=0, bounce=math.sin(T * 16) * (1 if st in ("out", "haul") else 0))
+        ctx.restore()
+    # ---- feller-buncher (drawn last so it sits in front of its bunch)
+    hp = ease_out_cubic(seg(t, 0.2, 1.0))
+    if hp > 0:
+        bob = math.sin(T * 18) * (1.2 if phase == "travel" else 0)
+        ctx.save(); ctx.translate(hx, hy + bob); ctx.rotate(tilt); ctx.translate(-hx, -hy - bob)
+        excavator(ctx, hx, hy + bob, 0.85, C["lime"], draw_boom=False, alpha=hp, roll=-hx * 0.8)
+        ctx.restore()
+        root = rotp(hx - 8, hy - 62 + bob, hx, hy, tilt); carry_tip = rotp(hx - 96, hy - 40, hx, hy, tilt)
+        head_ang = tilt; spin = 0.0; tip = carry_tip
+        if phase not in ("idle", "travel"):
+            tx = G_TREES[k]; ty = gy(tx); grip_tip = (tx + 2, ty - 30)
+            if phase == "grip":
+                e = ease_in_out(pp); tip = (carry_tip[0] + (grip_tip[0] - carry_tip[0]) * e, carry_tip[1] + (grip_tip[1] - carry_tip[1]) * e); head_ang = tilt * (1 - e)
+            elif phase == "cut": tip = grip_tip; head_ang = 0.0; spin = T * 40
+            elif phase == "lay":
+                ang = G_LAY * ease_in_out(pp); tip = rotp(grip_tip[0], grip_tip[1], tx, ty, ang); head_ang = ang
+            else:
+                laid = rotp(grip_tip[0], grip_tip[1], tx, ty, G_LAY); e = ease_in_out(pp)
+                tip = (laid[0] + (carry_tip[0] - laid[0]) * e, laid[1] + (carry_tip[1] - laid[1]) * e); head_ang = G_LAY * (1 - e) + tilt * e
+        mx, my = (root[0] + tip[0]) / 2, (root[1] + tip[1]) / 2
+        dx, dy = tip[0] - root[0], tip[1] - root[1]; ln = math.hypot(dx, dy) or 1
+        elbow = (mx + dy / ln * 55, my - dx / ln * 55)
+        if elbow[1] > my: elbow = (mx - dy / ln * 55, my + dx / ln * 55)
+        boom(ctx, [root, elbow, tip], 8, hp)
+        fb_head(ctx, tip[0], tip[1], head_ang, 0.85, spin, hp)
+        label_tag(ctx, hx, hy - 150, "Feller-buncher", seg(t, 4.6, 5.4) * (1 - seg(t, 8.0, 8.8)), C["lime"], "center")
+    if sk and sk[1] in ("haul",):
+        label_tag(ctx, sk[0], gy(sk[0]) - 118, "Skidder", seg(t, 11.6, 12.4) * (1 - seg(t, 14.0, 14.8)), C["lime"], "center")
+    # ---- captions
     left_panel(ctx, 700, 700)
     eyebrow(ctx, "System 1 of 3", 120, 200, seg(t, 0.2, 0.9))
     reveal_text(ctx, "Ground-based.", 120, 300, 84, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
     reveal_text(ctx, "Machines drive to the tree.", 120, 360, 30, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
-    bullets(ctx, [("Gentle ground, under ~35% slope", 3.0), ("Feller-buncher cuts and bunches", 5.0), ("Skidder drags bunches to the road", 8.0),
-                  ("Processor bucks, loader fills the truck", 12.0), ("Short cycles → lowest cost per m³", 16.0)], 120, 450, t)
-    slope_marker(ctx, 760, g_ground(760) + 70, 200, 20, seg(t, 3.2, 4.0), "≈10–35%")
-    label_tag(ctx, 1560, g_ground(1560) - 160, "Landing", seg(t, 12.2, 13.0), C["lime"], "center")
-    label_tag(ctx, 1100, 400, "Feller-buncher", seg(t, 5.2, 6.0), C["lime"], "center")
+    bullets(ctx, [("Gentle ground, under ~35% slope", 3.0), ("Feller-buncher cuts and bunches", 5.0), ("Skidder drags bunches to the road", 9.0),
+                  ("Processor bucks, loader fills the truck", 13.0), ("Short cycles – the lowest cost per m³", 17.0)], 120, 450, t)
+    slope_marker(ctx, 330, g_ground(330) + 90, 200, 20, seg(t, 3.2, 4.0), "≈10–35%")
+    label_tag(ctx, 1480, gy(1480) - 165, "Landing", seg(t, 13.2, 14.0), C["lime"], "center")
 
 # ----------------------------------------------------------------------------- 3. cable yarding (30-55)
 def g_cable(x): return 430 + (1150 - min(x, 1500)) * 0.42 * clamp((1500 - x) / 1300) ** 0.9 * (1 if x < 1500 else 0) + (0 if x < 1500 else 0)
@@ -320,58 +434,86 @@ def g_steep(x):
     u = (1480 - x) / 1300
     return 430 + 560 * min(1, u) ** 0.95 + 10 * math.sin(x * 0.01)
 
+def crew_figure(ctx, px, py, alpha=1.0):
+    set_col(ctx, C["amber"], alpha); ctx.new_path(); ctx.arc(px, py - 34, 6, 0, 2 * math.pi); ctx.fill()
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(3); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    ctx.move_to(px, py - 28); ctx.line_to(px, py - 10); ctx.move_to(px, py - 10); ctx.line_to(px - 6, py); ctx.move_to(px, py - 10); ctx.line_to(px + 6, py); ctx.stroke()
+
+CY_X = 1690                                  # yarder position on the road
+CY_TAIL = (150, None)                        # tail tree at the bottom of the slope
+CY_TREES = [260, 400, 560, 700, 860, 1020]   # trees taken, one per turn, working uphill
+CY_START = 3.0; CY_CYC = 8.0                 # out 3.0, hook 1.0, in 3.5, unhook 0.5
+CY_TREE_H = 170
+
+def skyline_pt(top, tail, u):
+    """point on the sagging skyline, u = 0 at the tail, 1 at the yarder"""
+    s0 = 1 - u
+    return tail[0] + (top[0] - tail[0]) * u, (1 - s0) ** 2 * top[1] + 2 * (1 - s0) * s0 * ((top[1] + tail[1]) / 2 + 40) + s0 ** 2 * tail[1]
+
 def s_cable(ctx, t, T):
     paper_bg(ctx, T, 0.7)
     terrain(ctx, g_steep)
     road(ctx, g_steep, 1480, W + 20)
-    # standing trees on the slope (some yarded away over time)
-    for i in range(18):
-        tx = 150 + i * 70 + (hsh(i, 3) - 0.5) * 30; ty = g_steep(tx); hgt = 120 + 60 * hsh(i, 4)
-        gone = seg(t, 6 + i * 1.0, 6.5 + i * 1.0) if i % 2 == 0 else 0
-        if gone >= 1: stump(ctx, tx, ty); continue
-        conifer(ctx, tx, ty, hgt, 1.0, seed=40 + i, sway_t=T, tiers=10, alpha=1 - gone)
     yp = ease_out_cubic(seg(t, 0.3, 1.2))
-    top = yarder(ctx, 1600, g_steep(1600) + 2, 0.95, alpha=yp)
-    tail = (140, g_steep(140) - 30)
-    stump(ctx, 140, g_steep(140), 14, yp)
-    # skyline
+    tail_x = CY_TAIL[0]; tail = (tail_x, g_steep(tail_x) - CY_TREE_H * 0.8)
+    top = (CY_X - 30 * 0.95, g_steep(CY_X) + 2 - 330 * 0.95)
+    # ---- turn bookkeeping
+    k = int((t - CY_START) // CY_CYC) if t >= CY_START else -1
+    cyc = (t - CY_START) % CY_CYC if t >= CY_START else 0.0
+    k = min(k, len(CY_TREES) - 1)
+    turns_done = sum(1 for j in range(len(CY_TREES)) if t >= CY_START + j * CY_CYC + 7.5)
+    # ---- trees: standing → felled (tipped downhill 2 s before its turn) → hooked away during the hook phase
+    for i in range(6):   # far trees below the tail tree area / decorative, never taken
+        tx = 1150 + i * 50 + (hsh(i, 3) - 0.5) * 20
+        conifer(ctx, tx, g_steep(tx), 100 + 40 * hsh(i, 4), 1.0, seed=40 + i, sway_t=T, tiers=9, alpha=0.85)
+    for j, tx in enumerate(CY_TREES):
+        ty = g_steep(tx); hgt = 130 + 50 * hsh(j, 5); t_turn = CY_START + j * CY_CYC
+        fell = seg(t, t_turn - 1.4, t_turn - 0.4)
+        hooked = seg(t, t_turn + 3.0, t_turn + 4.0)
+        if hooked >= 1: stump(ctx, tx, ty, 11); continue
+        if fell > 0: stump(ctx, tx, ty, 11)
+        ctx.save(); ctx.translate(tx, ty); ctx.rotate(LAY_A * ease_in_out(fell)); ctx.translate(-tx, -ty)
+        conifer(ctx, tx, ty, hgt, 1.0, seed=50 + j, sway_t=T if fell == 0 else 0, tiers=10, alpha=1 - hooked); ctx.restore()
+    # tail tree with the skyline block near its top
+    conifer(ctx, tail_x, g_steep(tail_x), CY_TREE_H, 1.0, seed=99, sway_t=0, tiers=11)
+    # ---- yarder + skyline
+    yarder(ctx, CY_X, g_steep(CY_X) + 2, 0.95, alpha=yp)
     sl = ease_in_out(seg(t, 1.0, 2.6))
     if sl > 0:
         end = (top[0] + (tail[0] - top[0]) * sl, top[1] + (tail[1] - top[1]) * sl)
         cable(ctx, top, end, sag=40 * sl, lw=2.4, alpha=yp)
-        label_tag(ctx, 900, 330, "Skyline", seg(t, 2.4, 3.2), C["aqua2"], "center")
-        label_tag(ctx, 140, g_steep(140) - 60, "Tailhold anchor", seg(t, 2.6, 3.4), C["aqua2"], "left")
-    # carriage cycle: out empty (3s), hook (1s), in loaded (3.5s), unhook (0.5s) = 8 s
-    if t > 3.0:
-        cyc = (t - 3.0) % 8.0
-        if cyc < 3.0: u = 1 - ease_in_out(cyc / 3.0); drop = 0; logs = ()
-        elif cyc < 4.0: u = 0; drop = 90 * ease_in_out((cyc - 3.0) / 1.0); logs = ()
-        elif cyc < 7.5: u = ease_in_out((cyc - 4.0) / 3.5); drop = 90 - 60 * u; logs = [(110, 12, 0.5, -10, 10), (110, 11, 0.6, 14, 16), (100, 10, 0.45, 2, 28)]
+        if sl >= 1:
+            set_col(ctx, NAVY); ctx.new_path(); ctx.arc(tail[0], tail[1], 5, 0, 2 * math.pi); ctx.fill()
+        sx_, sy_ = skyline_pt(top, tail, 0.62)
+        label_tag(ctx, sx_, sy_ - 22, "Skyline", seg(t, 2.4, 3.2), C["aqua2"], "center")
+        label_tag(ctx, tail_x + 34, tail[1] - 4, "Tail tree anchor", seg(t, 2.6, 3.4), C["aqua2"], "left")
+    # ---- carriage: out to the felled tree, hook, in loaded, unhook at the road
+    if t >= CY_START and sl >= 1:
+        tx = CY_TREES[k]; u_k = (tx + 20 - tail[0]) / (top[0] - tail[0])
+        if cyc < 3.0: u = 1 - (1 - u_k) * ease_in_out(cyc / 3.0); drop = 0; logs = ()
+        elif cyc < 4.0: u = u_k; drop = 1; logs = ()
+        elif cyc < 7.5: u = u_k + (1 - u_k) * ease_in_out((cyc - 4.0) / 3.5); drop = 1 - 0.7 * ease_in_out((cyc - 4.0) / 3.5); logs = [(110, 12, 0.5, -10, 10), (110, 11, 0.6, 14, 16), (100, 10, 0.45, 2, 28)]
         else: u = 1; drop = 0; logs = ()
-        # position along the sagging skyline
-        cx = top[0] + (tail[0] - top[0]) * (1 - u) if False else tail[0] + (top[0] - tail[0]) * u
-        s0 = (1 - u); cy = (1 - s0) ** 2 * top[1] + 2 * (1 - s0) * s0 * ((top[1] + tail[1]) / 2 + 40) + s0 ** 2 * tail[1]
-        carriage(ctx, cx, cy, 1.0, drop, logs)
-        # main line back to the yarder
+        cx, cy = skyline_pt(top, tail, u)
+        max_drop = max(20, g_steep(cx) - cy - 56)
+        dpx = min(90, max_drop) * ease_in_out(clamp((cyc - 3.0) / 0.8)) if cyc < 4.0 else min(90, max_drop) * drop
+        if cyc >= 4.0 and cyc < 7.5: logs = [(110, 12, 0.5, -10, 10), (110, 11, 0.6, 14, 16), (100, 10, 0.45, 2, 28)]
+        carriage(ctx, cx, cy, 1.0, dpx, logs)
         cable(ctx, (cx, cy), (top[0] + 6, top[1] + 8), sag=14, lw=1.4, alpha=0.7)
-    # landing deck grows
-    ndeck = min(8, int(max(0, (t - 10) / 2.5)))
-    for i in range(ndeck):
+        # chokermen work at the hook point
+        for m in range(2):
+            px = tx + 40 + m * 44 + 5 * math.sin(T * 2 + m); crew_figure(ctx, px, g_steep(px))
+        label_tag(ctx, tx + 62, g_steep(tx + 62) - 62, "Rigging crew", seg(t, 8.0, 8.8) * (1 - seg(t, 11.5, 12.3)), C["amber"], "center")
+    # ---- deck on the road between the crest and the yarder
+    for i in range(min(9, turns_done * 3)):
         row, col = divmod(i, 3)
-        log(ctx, 1380 + col * 10, 430 - 10 - row * 13, 100, 12, 0)
-    # crew figures near the tail (chokers)
-    if t > 3:
-        for k in range(2):
-            px = 260 + k * 50 + 6 * math.sin(T * 2 + k); py = g_steep(px)
-            set_col(ctx, C["amber"]); ctx.new_path(); ctx.arc(px, py - 34, 6, 0, 2 * math.pi); ctx.fill()
-            set_col(ctx, NAVY); ctx.set_line_width(3); ctx.move_to(px, py - 28); ctx.line_to(px, py - 10); ctx.move_to(px, py - 10); ctx.line_to(px - 6, py); ctx.move_to(px, py - 10); ctx.line_to(px + 6, py); ctx.stroke()
-        label_tag(ctx, 285, g_steep(285) - 60, "Rigging crew", seg(t, 8.0, 8.8), C["amber"], "center")
+        log(ctx, 1545 + col * 10, 430 - 9 - row * 12, 90, 11, 0)
     left_panel(ctx, 720, 700)
     eyebrow(ctx, "System 2 of 3", 120, 200, seg(t, 0.2, 0.9))
     reveal_text(ctx, "Cable yarding.", 120, 300, 84, NAVY, seg(t, 0.4, 1.2), fam="Jost Light")
     reveal_text(ctx, "The tree comes to the machine.", 120, 360, 30, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
-    bullets(ctx, [("Steep ground, roughly 35–60%+", 3.5), ("Yarder stays on the road", 5.5), ("Skyline + carriage pull each turn uphill", 8.5),
-                  ("Bigger crew: operator, chokers, chaser", 12.0), ("Longer cycles → higher cost per m³", 16.0)], 120, 450, t)
+    bullets(ctx, [("Steep ground, roughly 35–60%+", 3.5), ("Yarder stays on the road; fallers work ahead", 5.5), ("Skyline + carriage pull each turn uphill", 8.5),
+                  ("Bigger crew: operator, chokers, chaser", 12.0), ("Longer cycles – a higher cost per m³", 16.0)], 120, 450, t)
     slope_marker(ctx, 420, g_steep(420) + 40, 160, 100, seg(t, 3.7, 4.5), "≈45%")
 
 # ----------------------------------------------------------------------------- 4. tethered (55-75)
@@ -379,6 +521,12 @@ def rotp(px, py, cx, cy, a):
     """rotate (px, py) about (cx, cy) by a (cairo convention: positive = clockwise on screen)"""
     dx, dy = px - cx, py - cy
     return cx + dx * math.cos(a) - dy * math.sin(a), cy + dx * math.sin(a) + dy * math.cos(a)
+
+def grapple(ctx, x, y, s=1.0, closed=0.0, alpha=1.0):
+    set_col(ctx, NAVY, alpha); ctx.set_line_width(3 * s); ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    spread = 24 * s * (1 - 0.55 * closed)
+    for sd in (-1, 1):
+        ctx.move_to(x, y); ctx.curve_to(x + sd * spread, y + 10 * s, x + sd * spread * 0.9, y + 30 * s, x + sd * 6 * s, y + 36 * s); ctx.stroke()
 
 def harvest_head(ctx, x, y, ang, s=1.0, alpha=1.0):
     ctx.save(); ctx.translate(x, y); ctx.rotate(ang)
