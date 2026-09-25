@@ -33,10 +33,11 @@ CUES = [
     (56.2, "And BC mills come first. Every log is offered to domestic manufacturers before export. "
            "Over sixty mills rely on Mosaic. Thirty of them, here on Vancouver Island."),
     (71.2, "Keeping fibre flowing to BC mills, forestry workers and contractors busy, and coastal communities strong."),
-    (81.8, "Mosaic Forest Management. Innovation and stewardship meet here."),
+    (81.8, "Mosaic Forest Management."),
+    (85.2, "Innovation and stewardship meet here."),
 ]
-SCENE_ENDS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0, 90.0]
-PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə"}   # IPA overrides
+SCENE_ENDS = [10.0, 24.0, 42.0, 55.0, 70.0, 80.0, 90.0, 90.0]
+PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə", "contractors": "kˈɑːntɹæktɚz"}   # IPA overrides
 
 def synth(voice, speed):
     from kokoro_onnx import Kokoro
