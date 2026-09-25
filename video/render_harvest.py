@@ -260,17 +260,23 @@ def s_title(ctx, t, T):
         text(ctx, lab.upper(), x, 920, 15, C["grey"], fam="Jost Medium", align="center", tracking=4, alpha=ease_out_cubic(p))
 
 # ----------------------------------------------------------------------------- 2. ground-based (8-30)
-def g_ground(x): return 760 + 0.10 * (x - 1500) + 8 * math.sin(x * 0.006)
+def g_ground(x): return 820 + 0.10 * (x - 1500) + 8 * math.sin(x * 0.006)
 
-G_TREES = [1150, 1060, 970, 880, 790]     # buncher works these uphill (leftwards), in order
+G_TREES = [880, 795, 710, 625]             # buncher works these uphill (leftwards), in order
 G_START = 1.0
-G_CYC = [3.4] + [2.6] * 4
+G_CYC = [4.8] + [4.6] * 3
+G_END = 1.0 + sum(G_CYC); G_NEXT = 560     # after the last tree the buncher moves on to the next strip
 G_ST = [G_START + sum(G_CYC[:k]) for k in range(len(G_CYC))]
 G_LAY = math.pi / 2 + math.atan(0.10)     # laid to the right (downhill, behind the machine) along the ground
-GS_TRIPS = [8.6, 14.5, 20.4]              # skidder trips for bunches 0, 1, 2
-GS_OUT, GS_TURN, GS_GRAB, GS_HAUL, GS_DROP = 2.2, 0.4, 0.4, 2.4, 0.5
-GS_LAND = 1195                             # skidder stops here; tree-length lies to its left
-P_X, L_X, TR_X = 1330, 1600, 1830          # processor, loader, truck
+G_STEM = -(math.pi / 2 - math.atan(0.10)) # a stem lying on the landing, butt right, top left, along the ground
+GS_TRIPS = [8.4, 18.4]                    # skidder trips: trees (0,1), then (2,3) hauled out through the cut
+GS_OUT, GS_TURN, GS_GRAB, GS_HAUL, GS_DROP = 1.8, 0.4, 0.4, 2.0, 0.5
+GS_CYC = GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP
+GS_LAND = 1290                             # skidder stops here; the drag lies to its left on the landing
+P_X, L_X, TR_X = 1400, 1660, 1845          # processor, loader, truck
+HEAD_X = 1205                              # processor head: stems are fed through it here
+DECK_X = 1520
+PC_START, PC = 0.5, 3.6                    # processor cycles continuously while there are stems
 
 def g_tree_state(j, t):
     c = t - G_ST[j]; L = G_CYC[j]
@@ -282,6 +288,13 @@ def g_tree_state(j, t):
         e0 = e1
     return "done", 1.0
 
+def landing_stem(ctx, x_butt, y_butt, i, seed, clip_x=None, alpha=1.0):
+    """a tree-length lying on the landing with its butt at (x_butt, y_butt), top pointing uphill (left)"""
+    ctx.save()
+    if clip_x is not None: ctx.rectangle(0, 0, clip_x, H); ctx.clip()
+    ctx.translate(x_butt, y_butt); ctx.rotate(G_STEM)
+    conifer(ctx, 0, 0, 150 + 20 * (i % 2), 1.0, seed=seed, sway_t=0, tiers=10, alpha=alpha); ctx.restore()
+
 def s_ground(ctx, t, T):
     paper_bg(ctx, T, 0.7)
     terrain(ctx, g_ground)
@@ -289,31 +302,33 @@ def s_ground(ctx, t, T):
     gy = lambda x: g_ground(x) + 2
     # ---- buncher state
     k = max([i for i in range(len(G_TREES)) if t >= G_ST[i]], default=-1)
-    if k < 0: hx = 1290.0; phase, pp = "idle", 0.0
+    if k < 0: hx = 1080.0; phase, pp = "idle", 0.0
     else:
         phase, pp = g_tree_state(k, t)
-        goal = G_TREES[k] + 110; prev = 1290.0 if k == 0 else G_TREES[k - 1] + 110
+        goal = G_TREES[k] + 110; prev = 1080.0 if k == 0 else G_TREES[k - 1] + 110
         hx = prev + (goal - prev) * ease_in_out(pp) if phase == "stand" else goal
         if phase == "stand": phase = "travel"
-        if phase == "done": phase = "release"; pp = 1.0
+        if phase == "done":
+            u = ease_in_out(seg(t, G_END, G_END + 1.8)); hx = goal + (G_NEXT - goal) * u
+            phase, pp = ("travel", u) if u < 1 else ("idle", 0.0)
     hy = gy(hx); tilt = -math.atan2(g_ground(hx - 40) - g_ground(hx + 40), 80)
     # ---- skidder trips
-    sk = None; picked = set(); delivered = []
+    sk = None; picked = set(); drops = []          # drops: times a drag was released on the landing
     for j, s0 in enumerate(GS_TRIPS):
         if t < s0: break
-        butt = G_TREES[j] + 8; goal = butt + 100; c = t - s0
+        goal = G_TREES[2 * j] + 270; c = t - s0   # grapple at the downhill end of the pair, clear of the buncher
         if c < GS_OUT: sx = GS_LAND + (goal - GS_LAND) * ease_in_out(c / GS_OUT); st = "out"
         elif c < GS_OUT + GS_TURN: sx = goal; st = "turn"
         elif c < GS_OUT + GS_TURN + GS_GRAB: sx = goal; st = "grab"
         elif c < GS_OUT + GS_TURN + GS_GRAB + GS_HAUL: sx = goal + (GS_LAND - goal) * ease_in_out((c - GS_OUT - GS_TURN - GS_GRAB) / GS_HAUL); st = "haul"
-        elif c < GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP: sx = GS_LAND; st = "drop"
+        elif c < GS_CYC: sx = GS_LAND; st = "drop"
         else: sx = GS_LAND; st = "wait"
         sk = (sx, st, j, c)
-        if c >= GS_OUT + GS_TURN + GS_GRAB * 0.5: picked.add(j)
-        if c >= GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP * 0.6: delivered.append(s0 + GS_OUT + GS_TURN + GS_GRAB + GS_HAUL + GS_DROP * 0.6)
+        if c >= GS_OUT + GS_TURN + GS_GRAB * 0.5: picked.update((2 * j, 2 * j + 1))
+        if c >= GS_OUT + GS_TURN + GS_GRAB + GS_HAUL: drops.append(s0 + GS_OUT + GS_TURN + GS_GRAB + GS_HAUL)
     # ---- background stand (never cut) + worked trees
     for i in range(7):
-        tx = 615 + i * 28 + (hsh(i, 1) - 0.5) * 14; conifer(ctx, tx, gy(tx), 120 + 50 * hsh(i, 2), 1.0, seed=i, sway_t=T, tiers=10, alpha=0.75)
+        tx = 300 + i * 28 + (hsh(i, 1) - 0.5) * 14; conifer(ctx, tx, gy(tx), 120 + 50 * hsh(i, 2), 1.0, seed=i, sway_t=T, tiers=10, alpha=0.6)
     states = [(j, tx, gy(tx), 150 + 40 * hsh(j, 3)) + g_tree_state(j, t) for j, tx in enumerate(G_TREES)]
     for j, tx, ty, hgt, ph, p in states:          # laid bunches first (behind the machine, near plane)
         if ph in ("stand", "grip", "cut") or (ph in ("release", "done") and j in picked): continue
@@ -329,32 +344,48 @@ def s_ground(ctx, t, T):
             for m in range(5):
                 aa = -0.3 - m * 0.5 + p * 2; ctx.move_to(tx + 4, ty - 6); ctx.line_to(tx + 4 + 18 * math.cos(aa), ty - 6 + 18 * math.sin(aa))
             ctx.stroke()
-    # ---- landing: tree-length fed through the processor, bucked logs on the deck, loader fills the truck
+    # ---- landing pile + processor schedule: stems available = 2 to start + 2 per drop; one consumed per cycle
+    def avail(tt): return 4 + 2 * sum(1 for d in drops if d <= tt)
+    consumed = 0; active = None; n = 0; logs_bucked = 0
+    while True:
+        st0 = PC_START + n * PC; n += 1
+        if st0 > t: break
+        if consumed < avail(st0):
+            consumed += 1
+            q = (t - st0) / PC
+            if q < 1: active = (st0, q)
+            logs_bucked += sum(1 for f in (0.45, 0.65, 0.85) if q >= f)
+        if n > 40: break
+    pile = avail(t) - consumed
+    pile_butt = (GS_LAND - 92, gy(GS_LAND - 92) - 4)
     py = gy(P_X)
-    proc_start = delivered[-1] if delivered else None
-    feed = clamp((t - proc_start) / 2.4) if proc_start is not None else 1.0
-    head_x = 1108
-    if proc_start is not None and feed < 1:
-        shift = 150 * ease_in_out(feed)
-        ctx.save(); ctx.rectangle(0, 0, head_x, H); ctx.clip()
-        base = (head_x - 8 + shift, gy(head_x) + 6)
-        ctx.save(); ctx.translate(*base); ctx.rotate(math.pi / 2 - math.atan(0.10) + math.pi); ctx.translate(-base[0], -base[1])
-        conifer(ctx, base[0], base[1], 160, 1.0, seed=30, sway_t=0, tiers=10); ctx.restore(); ctx.restore()
-    bucked = 3 * len(delivered) - (0 if proc_start is None else int(round(3 * (1 - feed))))
-    loads = int(max(0, (t - 2.0) / 3.0))            # loader cycles completed
-    deck = max(0, 4 + bucked - loads); loaded = min(8, loads)
+    # stems waiting on the landing (drawn under the skidder's drag so a drop reads as 'added to the pile')
+    for i in range(pile):
+        landing_stem(ctx, pile_butt[0] - i * 4, pile_butt[1] - i * 7, i, 40 + i)
+    # the stem being fed slides right through the head; clipped at the head so it 'disappears' into it
+    feed_pt = (HEAD_X + 10, gy(HEAD_X) - 16); tip = feed_pt
+    if active:
+        st0, q = active
+        if q < 0.2:
+            e = math.sin(math.pi * q / 0.2); tip = (feed_pt[0] - 40 * e, feed_pt[1] - 30 * e)   # head dips to pick the next stem
+        elif q < 0.85:
+            shift = 170 * ease_in_out((q - 0.2) / 0.65)
+            landing_stem(ctx, pile_butt[0] + shift, pile_butt[1] + 4, 0, 40 + consumed, clip_x=HEAD_X)
+    # bucked logs on the deck; loader takes one per cycle
+    loads = int(max(0, (t - 2.0) / 3.0)); lc = (t - 2.0) % 3.0 if t >= 2.0 else 0.0
+    deck = max(0, 4 + logs_bucked - loads); loaded = min(8, loads)
     for i in range(deck):
         row, col = divmod(i, 3)
-        log(ctx, 1410 + col * 12, gy(1420) - 8 - row * 12, 88, 11, 0)
+        log(ctx, DECK_X + col * 12, gy(DECK_X) - 8 - row * 12, 88, 11, 0)
     # processor
     excavator(ctx, P_X, py, 0.85, C["lime"], draw_boom=False)
-    proot = (P_X - 8, py - 62); ptip = (head_x + 10, gy(head_x) - 16) if (proc_start is not None and feed < 1) else (P_X - 150, py - 52)
-    pm = ((proot[0] + ptip[0]) / 2, (proot[1] + ptip[1]) / 2); pdx, pdy = ptip[0] - proot[0], ptip[1] - proot[1]; pl = math.hypot(pdx, pdy) or 1
-    boom(ctx, [proot, (pm[0] + pdy / pl * 60, pm[1] - pdx / pl * 60), ptip], 8)
-    harvest_head(ctx, ptip[0], ptip[1] + 8, math.pi / 2, 0.8)
+    proot = (P_X - 8, py - 62)
+    pm = ((proot[0] + tip[0]) / 2, (proot[1] + tip[1]) / 2); pdx, pdy = tip[0] - proot[0], tip[1] - proot[1]; pl = math.hypot(pdx, pdy) or 1
+    boom(ctx, [proot, (pm[0] + pdy / pl * 60, pm[1] - pdx / pl * 60), tip], 8)
+    harvest_head(ctx, tip[0], tip[1] + 8, math.pi / 2, 0.8)
     # loader: grab at the deck, swing to the truck, release, return (3 s cycle)
-    ly = gy(L_X); lc = (t - 2.0) % 3.0 if t >= 2.0 else 0.0
-    deck_pt = (1440, gy(1420) - 60); truck_pt = (TR_X - 20, gy(TR_X) - 110)
+    ly = gy(L_X)
+    deck_pt = (DECK_X + 12, gy(DECK_X) - 60); truck_pt = (TR_X - 20, gy(TR_X) - 110)
     if lc < 0.35: u = 0.0; carry = False; closed = lc / 0.35
     elif lc < 1.6: u = ease_in_out((lc - 0.35) / 1.25); carry = True; closed = 1.0
     elif lc < 1.9: u = 1.0; carry = False; closed = 1 - (lc - 1.6) / 0.3
@@ -369,7 +400,7 @@ def s_ground(ctx, t, T):
     boom(ctx, [lroot, elbow, ltip], 8)
     if carry: log(ctx, ltip[0], ltip[1] + 30, 88, 11, 0)
     grapple(ctx, ltip[0], ltip[1], 1.0, closed)
-    log_truck(ctx, TR_X, gy(TR_X), 0.75, logs=loaded)
+    log_truck(ctx, TR_X, gy(TR_X), 0.7, logs=loaded)
     # ---- skidder: drives out facing left, turns, grapples the butts, hauls right with the trees trailing behind
     if sk:
         sx, st, j, c = sk; sy = gy(sx); stilt = -math.atan2(g_ground(sx - 40) - g_ground(sx + 40), 80)
@@ -382,7 +413,7 @@ def s_ground(ctx, t, T):
                     txl = fx - 150 - i * 8; tyl = g_ground(txl) - 4 - i * 6
                     ang = math.atan2(txl - fx, -(tyl - fy))
                     ctx.save(); ctx.translate(fx + i * 4, fy - i * 6); ctx.rotate(ang)
-                    conifer(ctx, 0, 0, 150 + 20 * i, 1.0, seed=20 + j + i, sway_t=0, tiers=10); ctx.restore()
+                    conifer(ctx, 0, 0, 150 + 20 * i, 1.0, seed=20 + 2 * j + i, sway_t=0, tiers=10); ctx.restore()
         ctx.save(); ctx.translate(sx, sy); ctx.rotate(stilt)
         if facing_left: ctx.scale(-1, 1)
         skidder(ctx, 0, 0, 0.85, logs=0, bounce=math.sin(T * 16) * (1 if st in ("out", "haul") else 0))
@@ -414,7 +445,7 @@ def s_ground(ctx, t, T):
         fb_head(ctx, tip[0], tip[1], head_ang, 0.85, spin, hp)
         label_tag(ctx, hx, hy - 150, "Feller-buncher", seg(t, 4.6, 5.4) * (1 - seg(t, 8.0, 8.8)), C["lime"], "center")
     if sk and sk[1] in ("haul",):
-        label_tag(ctx, sk[0], gy(sk[0]) - 118, "Skidder", seg(t, 11.6, 12.4) * (1 - seg(t, 14.0, 14.8)), C["lime"], "center")
+        label_tag(ctx, sk[0], gy(sk[0]) - 118, "Skidder", seg(t, 10.0, 10.8) * (1 - seg(t, 11.4, 12.2)), C["lime"], "center")
     # ---- captions
     left_panel(ctx, 700, 700)
     eyebrow(ctx, "System 1 of 3", 120, 200, seg(t, 0.2, 0.9))
@@ -423,7 +454,8 @@ def s_ground(ctx, t, T):
     bullets(ctx, [("Gentle ground, under ~35% slope", 3.0), ("Feller-buncher cuts and bunches", 5.0), ("Skidder drags bunches to the road", 9.0),
                   ("Processor bucks, loader fills the truck", 13.0), ("Short cycles – the lowest cost per m³", 17.0)], 120, 450, t)
     slope_marker(ctx, 330, g_ground(330) + 90, 200, 20, seg(t, 3.2, 4.0), "≈10–35%")
-    label_tag(ctx, 1480, gy(1480) - 165, "Landing", seg(t, 13.2, 14.0), C["lime"], "center")
+    label_tag(ctx, P_X - 20, py - 150, "Processor", seg(t, 13.2, 14.0) * (1 - seg(t, 16.0, 16.8)), C["lime"], "center")
+    label_tag(ctx, L_X, ly - 150, "Loader", seg(t, 13.8, 14.6) * (1 - seg(t, 16.6, 17.4)), C["aqua2"], "center")
 
 # ----------------------------------------------------------------------------- 3. cable yarding (30-55)
 def g_cable(x): return 430 + (1150 - min(x, 1500)) * 0.42 * clamp((1500 - x) / 1300) ** 0.9 * (1 if x < 1500 else 0) + (0 if x < 1500 else 0)
