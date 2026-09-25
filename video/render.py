@@ -596,93 +596,123 @@ def scene_mosaic(ctx, t, T):
         text(ctx, name, 166, y + 8, 24, C["ink"], fam="Jost", alpha=0.9 * ease_out_cubic(p))
 
 # ----------------------------------------------------------------------------- 5. B.C. mills first (39-49)
-# stylised Vancouver Island: axis NW->SE, u along, v across (+ = east/Strait side)
-AX0 = (330, 170); AX1 = (1620, 930)
+# Real coastline: Natural Earth 10m land polygons clipped to the Salish Sea (data/coast.json,
+# data/vancouver_island.json). Mill towns are placed by lat/lon.
+import json
+_MAP = {}
 
-def island_pt(u, v):
-    dx, dy = AX1[0] - AX0[0], AX1[1] - AX0[1]; L = math.hypot(dx, dy); ex, ey = dx / L, dy / L
-    nx, ny = -ey, ex
-    return AX0[0] + ex * L * u + nx * 300 * v, AX0[1] + ey * L * u + ny * 300 * v
+def load_map():
+    if _MAP: return _MAP
+    _MAP["coast"] = json.load(open(os.path.join(HERE, "data", "coast.json")))
+    _MAP["island"] = json.load(open(os.path.join(HERE, "data", "vancouver_island.json")))
+    return _MAP
 
-def island_poly():
-    if "isl" in _TEX: return _TEX["isl"]
-    pts = []
-    n = 70
-    for k in range(n + 1):   # east coast
-        u = k / n; w = 0.34 * math.sin(math.pi * u) ** 0.55 + 0.03
-        w += 0.03 * math.sin(u * 9 + 1) + 0.02 * math.sin(u * 23)
-        pts.append(island_pt(u, w))
-    for k in range(n, -1, -1):  # west coast, fjords
-        u = k / n; w = 0.44 * math.sin(math.pi * u) ** 0.6 + 0.02
-        w += 0.06 * math.sin(u * 14 + 2) + 0.05 * abs(math.sin(u * 31)) * (0.5 + 0.5 * math.sin(u * 7))
-        pts.append(island_pt(u, -w))
-    _TEX["isl"] = pts
-    return pts
+LON0, LAT0 = -128.42, 50.87            # NW corner of the island bbox -> screen (620, 60)
+SX, SY = 375 * math.cos(math.radians(49.6)), 375   # px per degree (equirectangular at 49.6N)
 
-MILLS = [("Campbell River", 0.34, 0.26, 4), ("Black Creek", 0.39, 0.27, 1), ("Merville", 0.42, 0.27, 1), ("Port Alberni", 0.53, -0.08, 3),
-         ("Qualicum Beach", 0.55, 0.28, 1), ("Parksville", 0.58, 0.28, 2), ("Nanoose Bay", 0.60, 0.27, 2), ("Lantzville", 0.62, 0.27, 1),
-         ("Nanaimo", 0.65, 0.26, 4), ("Ladysmith", 0.70, 0.24, 3), ("Chemainus", 0.73, 0.23, 2), ("Duncan", 0.77, 0.20, 2), ("Cobble Hill", 0.80, 0.19, 2), ("Sooke", 0.91, -0.05, 2)]
+def proj(lon, lat):
+    return 620 + (lon - LON0) * SX, 60 + (LAT0 - lat) * SY
+
+MILLS = [  # (town, lat, lon, mills) — counts from mosaicforests.com's Log Sales & Market Access map
+    ("Campbell River", 50.0244, -125.2475, 4), ("Black Creek", 49.8480, -125.1170, 1), ("Merville", 49.7660, -125.0520, 1),
+    ("Port Alberni", 49.2339, -124.8055, 3), ("Qualicum Beach", 49.3494, -124.4438, 1), ("Parksville", 49.3192, -124.3136, 2),
+    ("Nanoose Bay", 49.2667, -124.1833, 2), ("Lantzville", 49.2483, -124.0736, 1), ("Nanaimo", 49.1659, -123.9401, 4),
+    ("Ladysmith", 48.9975, -123.8206, 3), ("Chemainus", 48.9245, -123.7136, 2), ("Duncan", 48.7787, -123.7079, 2),
+    ("Cobble Hill", 48.6640, -123.6110, 2), ("Sooke", 48.3745, -123.7358, 2),
+]
+
+def mill_layout():
+    """screen positions + de-overlapped label positions (labels fan right of the east-coast dots)"""
+    if "layout" in _MAP: return _MAP["layout"]
+    items = []
+    for name, lat, lon, cnt in MILLS:
+        x, y = proj(lon, lat)
+        left = name in ("Port Alberni", "Sooke")
+        items.append(dict(name=name, x=x, y=y, cnt=cnt, left=left, lx=x + (-22 if left else 22), ly=y))
+    # push overlapping labels apart (east side only), keep order by latitude
+    east = sorted([it for it in items if not it["left"]], key=lambda d: d["y"])
+    minsep = 27
+    for i in range(1, len(east)):
+        if east[i]["ly"] - east[i - 1]["ly"] < minsep: east[i]["ly"] = east[i - 1]["ly"] + minsep
+    # re-centre the pushed cluster around its dots
+    shift = sum(it["ly"] - it["y"] for it in east) / len(east)
+    for it in east: it["ly"] -= shift; it["lx"] = it["x"] + 22 + abs(it["ly"] - it["y"]) * 1.2
+    _MAP["layout"] = items
+    return items
 
 def scene_mills(ctx, t, T):
+    M = load_map()
     ctx.set_source(vgrad([(0, C["water"]), (1, lerpc(C["water"], C["water2"], 0.5))])); ctx.paint()
-    contours(ctx, T, C["white"], 0.35, width=1.2)
-    # mainland sliver top-right
+    contours(ctx, T, C["white"], 0.30, width=1.2)
     mp = ease_out_cubic(seg(t, 0.2, 1.4))
-    ctx.save(); ctx.translate(0, (1 - mp) * 40)
-    set_col(ctx, C["paper"], mp)
-    ctx.move_to(1150, -10); ctx.curve_to(1350, 120, 1500, 60, 1650, 260); ctx.curve_to(1780, 400, 1850, 520, 1930, 560); ctx.line_to(1930, -10); ctx.close_path(); ctx.fill()
+    # surrounding coast (mainland, Gulf Islands, Olympic Peninsula)
+    ctx.save(); ctx.translate(0, (1 - mp) * 30)
+    for ring in M["coast"]:
+        ctx.move_to(*proj(*ring[0]))
+        for lon, lat in ring[1:]: ctx.line_to(*proj(lon, lat))
+        ctx.close_path()
+    set_col(ctx, lerpc(C["paper"], C["water"], 0.35), mp); ctx.fill_preserve()
+    set_col(ctx, C["white"], 0.8 * mp); ctx.set_line_width(1.5); ctx.stroke()
     ctx.restore()
-    # island
-    ip = ease_out_cubic(seg(t, 0.3, 1.5))
-    pts = island_poly()
-    ctx.save(); ctx.translate(0, (1 - ip) * 30)
-    glow(ctx, 975, 560, 700, hexc("#2a5060"), 0.18 * ip)
-    poly_path(ctx, pts); set_col(ctx, C["paper"], ip); ctx.fill_preserve(); set_col(ctx, C["white"], ip); ctx.set_line_width(3); ctx.stroke()
-    poly_path(ctx, pts); ctx.clip(); contours(ctx, T, C["contour"], 0.9 * ip, width=1.1)
-    # forest tint patches on the island
-    for i in range(70):
-        u = 0.05 + 0.9 * hsh(i, 1); v = (hsh(i, 2) - 0.55) * 0.5
-        x, y = island_pt(u, v); r = 10 + 18 * hsh(i, 3)
-        set_col(ctx, lerpc(C["lime"], C["green"], hsh(i, 4)), 0.28 * ip); ctx.arc(x, y, r, 0, 2 * math.pi); ctx.fill()
+    # Vancouver Island
+    ip = ease_out_cubic(seg(t, 0.4, 1.6))
+    isl = M["island"]
+    def island_path():
+        ctx.move_to(*proj(*isl[0]))
+        for lon, lat in isl[1:]: ctx.line_to(*proj(lon, lat))
+        ctx.close_path()
+    ctx.save(); ctx.translate(0, (1 - ip) * 24)
+    glow(ctx, 1180, 560, 760, hexc("#2a5060"), 0.16 * ip)
+    island_path(); set_col(ctx, C["paper"], ip); ctx.fill_preserve(); set_col(ctx, C["white"], ip); ctx.set_line_width(3); ctx.stroke()
+    island_path(); ctx.clip(); contours(ctx, T, C["contour"], 0.9 * ip, width=1.1)
+    rng_pts = [(hsh(i, 1), hsh(i, 2), hsh(i, 3), hsh(i, 4)) for i in range(160)]
+    for (h1, h2, h3, h4) in rng_pts:
+        lon = LON0 + h1 * 5.2; lat = LAT0 - h2 * 2.6
+        x, y = proj(lon, lat); r = 8 + 16 * h3
+        set_col(ctx, lerpc(C["lime"], C["green"], h4), 0.26 * ip); ctx.new_path(); ctx.arc(x, y, r, 0, 2 * math.pi); ctx.fill()
     ctx.restore()
-    # log flow: dashes from interior to mill points
-    fp = seg(t, 2.0, 3.0)
-    n_on_island = 0
-    for i, (name, u, v, cnt) in enumerate(MILLS):
-        mx, my = island_pt(u, v)
-        p = seg(t, 1.6 + i * 0.22, 2.2 + i * 0.22)
+    # mills
+    for i, it in enumerate(mill_layout()):
+        mx, my = it["x"], it["y"]
+        p = seg(t, 1.8 + i * 0.22, 2.4 + i * 0.22)
         if p <= 0: continue
-        n_on_island += cnt
-        sx, sy = island_pt(u - 0.06 + 0.04 * hsh(i, 5), v - 0.22)
+        sx, sy = mx - 70 + 30 * hsh(i, 5), my - 55 + 30 * hsh(i, 6)
         set_col(ctx, C["green"], 0.6 * ease_out_cubic(p)); ctx.set_line_width(2.5); ctx.set_dash([8, 10], -T * 50)
         ctx.move_to(sx, sy); ctx.line_to(mx, my); ctx.stroke(); ctx.set_dash([])
         e = ease_out_back(p, 2.5)
-        glow(ctx, mx, my, 36, C["aqua2"], 0.35 * (0.6 + 0.4 * math.sin(T * 3 + i)))
+        glow(ctx, mx, my, 34, C["aqua2"], 0.35 * (0.6 + 0.4 * math.sin(T * 3 + i)))
         ctx.save(); ctx.translate(mx, my); ctx.scale(e, e)
-        set_col(ctx, C["navy"]); ctx.arc(0, 0, 11, 0, 2 * math.pi); ctx.fill()
-        text(ctx, str(cnt), 0, 5, 14, C["white"], fam="Jost SemiBold", align="center")
+        set_col(ctx, C["navy"]); ctx.new_path(); ctx.arc(0, 0, 11, 0, 2 * math.pi); ctx.fill()
+        text(ctx, str(it["cnt"]), 0, 5, 14, C["white"], fam="Jost SemiBold", align="center")
         ctx.restore()
-        lx = mx + (16 if v >= 0 else -16); al = "left" if v >= 0 else "right"
-        text(ctx, name, lx, my + 5, 15, C["ink"], fam="Jost Medium", align=al, alpha=ease_out_cubic(p))
+        a = ease_out_cubic(p)
+        if abs(it["ly"] - my) > 3 or abs(it["lx"] - mx) > 26:
+            set_col(ctx, C["navy"], 0.45 * a); ctx.set_line_width(1)
+            ctx.move_to(mx + (12 if not it["left"] else -12), my); ctx.line_to(it["lx"] - 6, it["ly"]); ctx.stroke()
+        text(ctx, it["name"], it["lx"], it["ly"] + 5, 15, C["ink"], fam="Jost Medium", align="right" if it["left"] else "left", alpha=a)
+    # region labels
+    lp = ease_out_cubic(seg(t, 1.2, 2.0))
+    text(ctx, "VANCOUVER ISLAND", 1010, 470, 15, C["grey"], fam="Jost Medium", align="center", tracking=5, alpha=0.8 * lp)
+    text(ctx, "STRAIT OF GEORGIA", 1480, 300, 13, C["aqua2"], fam="Jost Medium", align="center", tracking=4, alpha=0.9 * lp)
+    text(ctx, "PACIFIC OCEAN", 760, 900, 13, C["aqua2"], fam="Jost Medium", align="center", tracking=4, alpha=0.9 * lp)
     # copy panel (left)
-    ctx.save(); ctx.set_source(vgrad([(0, hexc("#ffffff", 0.94)), (1, hexc("#ffffff", 0))], 0, 0, 900, 0)); ctx.rectangle(0, 0, 900, H); ctx.fill(); ctx.restore()
+    ctx.save(); ctx.set_source(vgrad([(0, hexc("#ffffff", 0.94)), (0.75, hexc("#ffffff", 0.8)), (1, hexc("#ffffff", 0))], 0, 0, 760, 0)); ctx.rectangle(0, 0, 760, H); ctx.fill(); ctx.restore()
     eyebrow(ctx, "Log sales & market access", 120, 230, seg(t, 0.2, 0.9))
     reveal_text(ctx, "B.C. mills first.", 120, 330, 84, C["navy"], seg(t, 0.4, 1.2), fam="Jost Light")
     reveal_text(ctx, "Domestic manufacturers get every log first.", 120, 400, 28, C["ink"], seg(t, 1.2, 2.0), fam="Jost Light")
     reveal_text(ctx, "Only surplus declined at home goes to export.", 120, 440, 28, C["ink"], seg(t, 1.4, 2.2), fam="Jost Light")
-    # big counters
     cp = seg(t, 2.2, 3.0)
     if cp > 0:
         n60 = int(round(ease_out_expo(seg(t, 2.4, 5.6)) * 60)); n30 = int(round(ease_out_expo(seg(t, 2.4, 5.2)) * 30))
         e = ease_out_cubic(cp)
         text(ctx, f"{n60}+", 120, 620, 128, C["navy"], fam="Jost Medium", alpha=e)
         text(ctx, "B.C. MILLS SUPPLIED", 120, 660, 16, C["grey"], fam="Jost Medium", tracking=4, alpha=e)
-        text(ctx, f"{n30}", 500, 620, 128, C["aqua2"], fam="Jost Medium", alpha=e)
-        text(ctx, "ON VANCOUVER ISLAND", 500, 660, 16, C["grey"], fam="Jost Medium", tracking=4, alpha=e)
+        text(ctx, f"{n30}", 460, 620, 128, C["aqua2"], fam="Jost Medium", alpha=e)
+        text(ctx, "ON VANCOUVER ISLAND", 460, 660, 16, C["grey"], fam="Jost Medium", tracking=4, alpha=e)
     p2 = seg(t, 5.0, 5.8)
     if p2 > 0:
         e = ease_out_cubic(p2)
-        set_col(ctx, C["paper2"], e); rrect(ctx, 120, 720, 640, 96, 14); ctx.fill()
+        set_col(ctx, C["paper2"], e); rrect(ctx, 120, 720, 600, 96, 14); ctx.fill()
         text(ctx, "100%", 146, 782, 54, gradc(0.55), fam="Jost SemiBold", alpha=e)
         text(ctx, "of logs sold internationally were", 320, 764, 22, C["ink"], fam="Jost", alpha=e)
         text(ctx, "first offered to domestic mills.", 320, 794, 22, C["ink"], fam="Jost", alpha=e)
@@ -737,7 +767,7 @@ SCENES = [
     (49.0, 55.0, scene_working),
     (55.0, 60.0, scene_outro),
 ]
-TRANS = 0.8
+TRANS = 1.6
 
 def render_scene(idx, T):
     s0, s1, fn = SCENES[idx]
@@ -750,10 +780,10 @@ def mosaic_wipe(ctx, surfA, surfB, p, cell=64):
     nx, ny = W // cell + 1, H // cell + 1
     for j in range(ny):
         for i in range(nx):
-            thr = ((i + j) / (nx + ny)) * 0.62 + hsh(i, j, 77) * 0.25
-            s = seg(p, thr, thr + 0.13)
+            thr = ((i + j) / (nx + ny)) * 0.6 + hsh(i, j, 77) * 0.2
+            s = seg(p, thr, thr + 0.2)
             if s <= 0: continue
-            e = ease_out_cubic(s); x, y = i * cell + cell / 2, j * cell + cell / 2
+            e = max(0.03, ease_out_cubic(s)); x, y = i * cell + cell / 2, j * cell + cell / 2
             ctx.save(); ctx.translate(x, y); ctx.scale(e, e); ctx.translate(-x, -y)
             ctx.rectangle(i * cell - 0.5, j * cell - 0.5, cell + 1, cell + 1); ctx.clip()
             ctx.set_source_surface(surfB, 0, 0); ctx.paint()
@@ -790,7 +820,12 @@ def encode_chunk(args):
            "-i", "-", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p", path]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     for fi in range(f0, f1):
-        proc.stdin.write(bytes(render_frame(fi, scale).get_data()))
+        try:
+            frame = render_frame(fi, scale)
+        except Exception as e:  # surface the failing frame instead of an unpicklable cairo error
+            import traceback; traceback.print_exc()
+            raise RuntimeError(f"frame {fi} failed: {e!r}")
+        proc.stdin.write(bytes(frame.get_data()))
         if k == 0 and fi % 30 == 0: print(f"  chunk0 frame {fi}/{f1}", flush=True)
     proc.stdin.close(); proc.wait()
     return path
