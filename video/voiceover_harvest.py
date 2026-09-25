@@ -42,7 +42,7 @@ CUES = [
     (158.4, "Mosaic Forest Management."),
 ]
 SCENE_ENDS = [11.0, 33.0, 58.0, 86.0, 111.0, 131.0, 153.0, 161.0, 161.0]
-PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə", "contractors": "kˈɑːntɹæktɚz"}   # IPA overrides
+PRONOUNCE = {"Mosaic": "moʊzˈeɪɪk", "Koksilah": "kˈoʊksaɪlə", "contractors": "kˈɑːntɹæktɚz", "lowbed": "lˈoʊbˌɛd"}   # IPA overrides
 
 def synth(voice, speed):
     from kokoro_onnx import Kokoro
