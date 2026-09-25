@@ -27,7 +27,7 @@ CUES = [
     (3.2, "Mosaic Forest Management. Where innovation and stewardship meet."),
     (11.2, "We're redefining the forest economy. Forestry, renewable energy, watershed services, recreation, real estate, and carbon. "
            "One landscape, serving the public good."),
-    (25.0, "In the Koksilah Watershed, we're piloting a new approach: longer growth periods, harvest designs that protect water, "
+    (25.0, "In the Coke-sigh-la Watershed, we're piloting a new approach: longer growth periods, harvest designs that protect water, "
            "stronger stream protection and smaller road footprints, with seven hundred and fifteen hectares of older forest set aside."),
     (43.2, "It's why we're called Mosaic. Small patches on their own clocks, so the forest is never all one age, and never all one use."),
     (56.2, "And B.C. mills come first. Every log is offered to domestic manufacturers before export. "
@@ -80,7 +80,7 @@ def duck_envelope(v, depth_db=-9.0, attack=0.08, release=0.9):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--voice", default="am_michael")
+    ap.add_argument("--voice", default="bf_emma")
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--voice-gain", type=float, default=0.8)
     a = ap.parse_args()
