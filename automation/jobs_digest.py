@@ -10,7 +10,7 @@ Usage: python3 jobs_digest.py [--hours 48] [--json out.json]
 Prints a markdown list of new postings; writes JSON if --json given.
 Stdlib only, so it runs anywhere with python3.
 """
-import argparse, html, json, re, sys, time, urllib.parse, urllib.request
+import argparse, html, json, re, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
@@ -35,10 +35,17 @@ FRENCH_TITLE = re.compile(
     r"gestionnaire|adjoint|responsable|v\u00e9rificat)", re.I)
 
 
-def get(url, timeout=20):
+def get(url, timeout=20, retries=3):
+    """GET with browser headers; backs off and retries on HTTP 429."""
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == retries:
+                raise
+            time.sleep(8 * (attempt + 1))
 
 
 def clean(s):
@@ -157,7 +164,7 @@ def enrich_linkedin(jobs, limit, log):
         j["salary"] = " / ".join(dict.fromkeys(sal)) if sal else ""
         j["cpa"] = "CPA required" if re.search(r"CPA (designation|designated)? ?(is )?(required|mandatory)|must (be|have|hold) (a )?CPA", text, re.I) \
             else ("CPA mentioned" if "CPA" in text else "")
-        time.sleep(0.7)
+        time.sleep(1.2)
 
 
 def main():
