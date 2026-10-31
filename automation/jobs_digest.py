@@ -22,7 +22,12 @@ LINKEDIN_KEYWORDS = [
     "financial reporting manager", "corporate tax CPA", "tax manager",
     "financial analyst CPA", "FP&A analyst", "financial data analyst",
     "accounting manager remote", "senior accountant remote",
+    "financial controller", "corporate controller", "assistant controller",
+    "finance manager", "senior manager financial reporting", "technical accounting manager",
+    "internal controls manager", "finance systems automation", "FP&A manager",
 ]
+# (location, LinkedIn work-type filter) pairs searched for every keyword; f_WT=2 is remote.
+LINKEDIN_LOCATIONS = [("Canada", "2"), ("British Columbia, Canada", "2")]
 CPAO_KEYWORDS = ["remote"]
 JOBBANK_KEYWORDS = ["accountant CPA remote", "controller remote", "financial analyst remote", "tax remote"]
 
@@ -52,31 +57,37 @@ def clean(s):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
 
 
-def linkedin(hours, log):
+def linkedin(hours, log, pages=3):
+    """Search each keyword x location, paging 10 results at a time until a short page."""
     out = []
     for kw in LINKEDIN_KEYWORDS:
-        q = urllib.parse.urlencode({"keywords": kw, "location": "Canada", "f_WT": "2",
-                                    "f_TPR": f"r{hours*3600}", "start": 0})
-        url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + q
-        try:
-            body = get(url)
-        except Exception as e:
-            log.append(f"linkedin[{kw}]: {e}")
-            continue
-        for card in re.findall(r"<li>(.*?)</li>", body, re.S):
-            m_link = re.search(r'href="([^"]+)"', card)
-            m_title = re.search(r'class="base-search-card__title"[^>]*>(.*?)</h3>', card, re.S)
-            m_co = re.search(r'class="base-search-card__subtitle"[^>]*>(.*?)</h4>', card, re.S)
-            m_loc = re.search(r'class="job-search-card__location"[^>]*>(.*?)</span>', card, re.S)
-            m_date = re.search(r'datetime="([^"]+)"', card)
-            if not (m_link and m_title):
-                continue
-            out.append({"source": "linkedin", "title": clean(m_title.group(1)),
-                        "company": clean(m_co.group(1)) if m_co else "",
-                        "location": clean(m_loc.group(1)) if m_loc else "Canada (remote)",
-                        "posted": m_date.group(1) if m_date else "",
-                        "url": m_link.group(1).split("?")[0], "query": kw})
-        time.sleep(1)
+        for loc, wt in LINKEDIN_LOCATIONS:
+            for page in range(pages):
+                q = urllib.parse.urlencode({"keywords": kw, "location": loc, "f_WT": wt,
+                                            "f_TPR": f"r{hours*3600}", "start": page * 10})
+                url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + q
+                try:
+                    body = get(url)
+                except Exception as e:
+                    log.append(f"linkedin[{kw} | {loc} | p{page}]: {e}")
+                    break
+                cards = re.findall(r"<li>(.*?)</li>", body, re.S)
+                for card in cards:
+                    m_link = re.search(r'href="([^"]+)"', card)
+                    m_title = re.search(r'class="base-search-card__title"[^>]*>(.*?)</h3>', card, re.S)
+                    m_co = re.search(r'class="base-search-card__subtitle"[^>]*>(.*?)</h4>', card, re.S)
+                    m_loc = re.search(r'class="job-search-card__location"[^>]*>(.*?)</span>', card, re.S)
+                    m_date = re.search(r'datetime="([^"]+)"', card)
+                    if not (m_link and m_title):
+                        continue
+                    out.append({"source": "linkedin", "title": clean(m_title.group(1)),
+                                "company": clean(m_co.group(1)) if m_co else "",
+                                "location": clean(m_loc.group(1)) if m_loc else "Canada (remote)",
+                                "posted": m_date.group(1) if m_date else "",
+                                "url": m_link.group(1).split("?")[0], "query": f"{kw} | {loc}"})
+                time.sleep(1)
+                if len(cards) < 10:
+                    break
     return out
 
 
@@ -172,12 +183,17 @@ def main():
     ap.add_argument("--hours", type=int, default=48)
     ap.add_argument("--json")
     ap.add_argument("--details", type=int, default=100, help="fetch flags/salary for up to N LinkedIn rows (0 = skip)")
+    ap.add_argument("--pages", type=int, default=3, help="LinkedIn result pages (10 rows each) per keyword and location")
     a = ap.parse_args()
     log, jobs = [], []
-    for fn in (linkedin, cpa_ontario, jobbank):
+    jobs += linkedin(a.hours, log, a.pages)
+    for fn in (cpa_ontario, jobbank):
         jobs += fn(a.hours, log)
-    seen, uniq = set(), []
+    seen, seen_urls, uniq = set(), set(), []
     for j in jobs:
+        if j["url"] in seen_urls:
+            continue
+        seen_urls.add(j["url"])
         if EXCLUDE_TITLE.search(j["title"]):
             continue
         if FRENCH_TITLE.search(j["title"]) and "/" not in j["title"]:
