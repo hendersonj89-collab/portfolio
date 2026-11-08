@@ -7,12 +7,17 @@ Sources (no API keys needed):
   3. Job Bank Canada search, sorted by date
 
 Usage: python3 jobs_digest.py [--hours 48] [--json out.json]
+Long runs can be split so each step stays short (LinkedIn rate-limits heavily):
+  jobs_digest.py --part 1/3 --details 0 --max-minutes 8 --json p1.json   (then 2/3, 3/3)
+  jobs_digest.py --merge p1.json p2.json p3.json --details 150 --max-minutes 8 --json jobs.json
 Prints a markdown list of new postings; writes JSON if --json given.
 Stdlib only, so it runs anywhere with python3.
 """
 import argparse, html, json, re, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
+
+DEADLINE = {"search": float("inf"), "all": float("inf")}  # set by --max-minutes
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
       "Accept-Language": "en-CA,en;q=0.9"}
@@ -57,12 +62,15 @@ def clean(s):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
 
 
-def linkedin(hours, log, pages=3):
+def linkedin(hours, log, pages=3, keywords=LINKEDIN_KEYWORDS):
     """Search each keyword x location, paging 10 results at a time until a short page."""
     out = []
-    for kw in LINKEDIN_KEYWORDS:
+    for kw in keywords:
         for loc, wt in LINKEDIN_LOCATIONS:
             for page in range(pages):
+                if time.time() > DEADLINE["search"]:
+                    log.append(f"linkedin: time budget reached at '{kw} | {loc}'; later keywords skipped")
+                    return out
                 q = urllib.parse.urlencode({"keywords": kw, "location": loc, "f_WT": wt,
                                             "f_TPR": f"r{hours*3600}", "start": page * 10})
                 url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" + q
@@ -158,6 +166,9 @@ def enrich_linkedin(jobs, limit, log):
     for j in jobs:
         if j["source"] != "linkedin" or n >= limit:
             continue
+        if time.time() > DEADLINE["all"]:
+            log.append(f"detail: time budget reached after {n} postings")
+            return
         m = re.search(r"-(\d{6,})$", j["url"])
         if not m:
             continue
@@ -184,11 +195,31 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--details", type=int, default=100, help="fetch flags/salary for up to N LinkedIn rows (0 = skip)")
     ap.add_argument("--pages", type=int, default=3, help="LinkedIn result pages (10 rows each) per keyword and location")
+    ap.add_argument("--max-minutes", type=float, default=0,
+                    help="stop searching at ~55%% of this budget and stop detail fetches at 100%% (0 = no limit)")
+    ap.add_argument("--part", help="K/N: search only every Nth keyword starting at K (CPA Ontario and Job Bank run in part 1)")
+    ap.add_argument("--merge", nargs="+", metavar="JSON", help="skip searching; combine jobs from earlier --json files, then dedupe and fetch details")
     a = ap.parse_args()
+    if a.max_minutes:
+        start = time.time()
+        DEADLINE["search"] = start + a.max_minutes * 60 * 0.55
+        DEADLINE["all"] = start + a.max_minutes * 60
     log, jobs = [], []
-    jobs += linkedin(a.hours, log, a.pages)
-    for fn in (cpa_ontario, jobbank):
-        jobs += fn(a.hours, log)
+    if a.merge:
+        for path in a.merge:
+            try:
+                with open(path) as f:
+                    d = json.load(f)
+                jobs += d["jobs"]
+                log += d.get("errors", [])
+            except Exception as e:
+                log.append(f"merge[{path}]: {e}")
+    else:
+        k, n = (int(x) for x in a.part.split("/")) if a.part else (1, 1)
+        jobs += linkedin(a.hours, log, a.pages, LINKEDIN_KEYWORDS[k - 1::n])
+        if k == 1:
+            for fn in (cpa_ontario, jobbank):
+                jobs += fn(a.hours, log)
     seen, seen_urls, uniq = set(), set(), []
     for j in jobs:
         if j["url"] in seen_urls:
